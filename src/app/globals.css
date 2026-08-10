@@ -1,26 +1,67 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #eef2ef;
+  --surface: #fbfcfb;
+  --surface-2: #e7ece8;
+  --ink: #14201a;
+  --muted: #5b6b62;
+  --border: #c9d3cc;
+  --accent: #1f6b4a;
+  --accent-hover: #18553b;
+  --danger: #9b2c2c;
+  --background: var(--bg);
+  --foreground: var(--ink);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-body);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(31, 107, 74, 0.08), transparent 40%),
+    linear-gradient(180deg, #f5f7f5 0%, var(--bg) 100%);
+  color: var(--ink);
+  font-family: var(--font-body), "Segoe UI", sans-serif;
+}
+
+.bank-statement-grid {
+  overflow-x: clip;
+}
+
+.bank-statement-grid table {
+  width: 100%;
+  table-layout: fixed;
+  font-size: 0.75rem;
+}
+
+.bank-statement-grid th,
+.bank-statement-grid td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.bank-statement-grid th:nth-child(1), .bank-statement-grid td:nth-child(1) { width: 6%; }
+.bank-statement-grid th:nth-child(2), .bank-statement-grid td:nth-child(2) { width: 6%; }
+.bank-statement-grid th:nth-child(3), .bank-statement-grid td:nth-child(3) { width: 5%; }
+.bank-statement-grid th:nth-child(4), .bank-statement-grid td:nth-child(4) { width: 16%; }
+.bank-statement-grid th:nth-child(5), .bank-statement-grid td:nth-child(5) { width: 8%; }
+.bank-statement-grid th:nth-child(6), .bank-statement-grid td:nth-child(6) { width: 6%; }
+.bank-statement-grid th:nth-child(7), .bank-statement-grid td:nth-child(7) { width: 7%; }
+.bank-statement-grid th:nth-child(8), .bank-statement-grid td:nth-child(8) { width: 7%; }
+.bank-statement-grid th:nth-child(9), .bank-statement-grid td:nth-child(9) { width: 8%; }
+.bank-statement-grid th:nth-child(10), .bank-statement-grid td:nth-child(10) { width: 11%; }
+.bank-statement-grid th:nth-child(11), .bank-statement-grid td:nth-child(11) { width: 15%; }
+.bank-statement-grid th:nth-child(12), .bank-statement-grid td:nth-child(12) { width: 5%; }
+
+@media print {
+  body { background: white; }
+  aside, header, form, button, .print\:hidden { display: none !important; }
+  main { padding: 0 !important; }
+  table { font-size: 10pt; }
+  section { break-inside: avoid; }
 }
