@@ -1,5 +1,6 @@
 import { CashEntryForm } from "@/components/cash-book/cash-entry-form";
 import { CashTransferForm, CashVerificationForm, PrintCashBookButton } from "@/components/cash-book/cash-book-controls";
+import { TraditionalCashRegister } from "@/components/cash-book/traditional-cash-register";
 import { OpeningBalanceActions } from "@/components/masters/opening-balance-actions";
 import { DataTable, PageHeader } from "@/components/ui/primitives";
 import { requireUser } from "@/lib/auth/guards";
@@ -39,7 +40,6 @@ export default async function CashBookPage() {
     return code === "CASH-R" || code === "CASH-P";
   });
 
-  const runningByLocation = new Map<string, number>();
   const cashRows = (postings ?? []).flatMap((posting) => {
     const location = posting.locations as unknown as {
       code: string;
@@ -52,21 +52,29 @@ export default async function CashBookPage() {
     } | null;
     if (
       !location ||
-      location.cash_ledger_id !== posting.ledger_id ||
-      !["CASH-R", "CASH-P"].includes(voucher?.voucher_types?.code ?? "")
+      location.cash_ledger_id !== posting.ledger_id
     ) {
       return [];
     }
-
-    const receipt = Number(posting.debit_amount);
-    const payment = Number(posting.credit_amount);
-    const locationKey = posting.location_id ?? "";
-    const balance = Number(
-      ((runningByLocation.get(locationKey) ?? 0) + receipt - payment).toFixed(4),
-    );
-    runningByLocation.set(locationKey, balance);
-    return [{ posting, location, voucher, receipt, payment, balance }];
+    return [{ posting, location, voucher }];
   });
+
+  const companyCodeById = new Map((companies ?? []).map((company) => [company.id, company.code]));
+  const cashRegisters = (locations ?? []).map((location) => ({
+    id: location.id,
+    companyCode: companyCodeById.get(location.company_id) ?? "—",
+    locationCode: location.code,
+    locationName: location.name,
+    entries: cashRows.filter((row) => row.posting.location_id === location.id).map(({ posting, voucher }) => ({
+      id: posting.id,
+      voucherDate: posting.voucher_date,
+      voucherNumber: posting.voucher_number,
+      voucherType: voucher?.voucher_types?.code ?? null,
+      narration: voucher?.narration ?? null,
+      debitAmount: posting.debit_amount,
+      creditAmount: posting.credit_amount,
+    })),
+  }));
 
   return (
     <div className="space-y-8">
@@ -83,13 +91,7 @@ export default async function CashBookPage() {
       <div><h2 className="mb-3 text-lg font-semibold">Cash transfer between locations</h2><CashTransferForm companies={companies ?? []} locations={(locations ?? []).map((location)=>({id:location.id,company_id:location.company_id,code:location.code,name:location.name}))} years={financialYears ?? []} ledgers={ledgers ?? []}/></div>
       <div>
         <div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">Posted cash register</h2><PrintCashBookButton /></div>
-        <div className="space-y-6">{Array.from(new Map(cashRows.map((row) => [row.posting.location_id ?? "", row.location])).entries()).map(([locationId, registerLocation]) => <section key={locationId} className="break-inside-avoid"><h3 className="mb-2 font-semibold">{registerLocation.code} — {registerLocation.name}</h3><DataTable
-          columns={["Company", "Date", "Voucher", "Particulars", "Received", "Paid", "Balance"]}
-          rows={cashRows.filter((row) => row.posting.location_id === locationId).map(({ posting, voucher, receipt, payment, balance }) => [
-            (posting.companies as unknown as { code: string } | null)?.code ?? "—", posting.voucher_date, posting.voucher_number,
-            voucher?.narration ?? "—", receipt > 0 ? formatMoney(receipt) : "—", payment > 0 ? formatMoney(payment) : "—", formatMoney(balance),
-          ])}
-        /></section>)}</div>
+        <TraditionalCashRegister registers={cashRegisters} />
       </div>
       <div>
         <h2 className="mb-3 text-lg font-semibold">Daily physical cash verification</h2>

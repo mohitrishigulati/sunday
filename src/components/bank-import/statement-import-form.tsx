@@ -10,7 +10,11 @@ import {
 } from "@/lib/attachments";
 import { QuickCompanyBankAdd } from "@/components/entries/quick-company-bank-add";
 import { formatMoney } from "@/lib/format";
-import { validateStatementBalances } from "@/lib/bank-statement-validation";
+import {
+  repairStatementAmountsFromBalances,
+  statementBalanceErrorMessage,
+  validateStatementBalances,
+} from "@/lib/bank-statement-validation";
 
 type SourceFormat = "csv" | "xlsx" | "pdf";
 type Row = {
@@ -26,13 +30,31 @@ type Row = {
 
 function moneyUnits(value: number): number { return Math.round(value * 10000); }
 
-function amount(value: unknown): number {
-  const parsed = Number(
+function moneyTokens(value: unknown): string[] {
+  return (
     String(value ?? "")
-      .replace(/[₹,\s]/g, "")
+      .replace(/,/g, "")
+      .match(/-?\d+(?:\.\d+)?/g) ?? []
+  );
+}
+
+function amount(value: unknown): number {
+  const token = moneyTokens(value)[0];
+  if (!token) return 0;
+  const parsed = Number(
+    token
       .replace(/\b(dr|cr|debit|credit|wdl|deposit)\b/gi, "")
       .replace(/\((.+)\)/, "-$1"),
   );
+  return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
+}
+
+/** Rightmost amount in a cell — preferred for Balance when columns bleed. */
+function balanceAmount(value: unknown): number {
+  const tokens = moneyTokens(value);
+  const token = tokens.at(-1);
+  if (!token) return 0;
+  const parsed = Number(token);
   return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
 }
 
@@ -298,7 +320,7 @@ function rowsFromGrid(grid: unknown[][]): Row[] {
     let creditAmount = credit >= 0 ? amount(cells[credit]) : 0;
     const balanceAfter =
       balance >= 0 && cells[balance] !== "" && cells[balance] != null
-        ? amount(cells[balance])
+        ? balanceAmount(cells[balance]) || amount(cells[balance])
         : undefined;
 
     if (debitAmount === 0 && creditAmount === 0 && amountCol >= 0) {
@@ -480,7 +502,7 @@ async function parsePdf(file: File): Promise<Row[]> {
     const debitEnd = viewport.width * 0.755;
     const creditEnd = viewport.width * 0.845;
     const modes =
-      /^(transfer|trf|clearing|cash|neft|rtgs|imps|upi|ach|nach|atm|pos|card|cheque|chq)$/i;
+      /^(transfer|trf|clearing|cash|neft|rtgs|imps|upi|ach|nach|atm|pos|card|cheque|chq|cms|ft|inb|mmt|own|clg|dd|po|bg|emi|int|gst|tds|chrg|charge|salary|pension)$/i;
     const coreYs = [
       ...new Set(
         items
@@ -491,6 +513,10 @@ async function parsePdf(file: File): Promise<Row[]> {
           .map((item) => Math.round(item.y * 2) / 2),
       ),
     ].sort((a, b) => b - a);
+
+    // IOB COD (Credit or Debit) sits just before the amount columns.
+    const codFrom = iobOperationalLayout ? viewport.width * 0.575 : typeEnd;
+    const amountFrom = iobOperationalLayout ? viewport.width * 0.62 : typeEnd;
 
     const columnText = (cluster: typeof items, from: number, to: number) =>
       cluster
@@ -510,11 +536,24 @@ async function parsePdf(file: File): Promise<Row[]> {
       const cluster = items.filter((item) => item.y < upper && item.y >= lower);
       const core = items.filter((item) => Math.abs(item.y - coreY) <= 1.5);
       const parsedDates = datesIn(columnText(cluster, 0, dateEnd));
-      const debitCell = columnText(core, typeEnd, debitEnd);
+      const debitCell = columnText(core, amountFrom, debitEnd);
       const creditCell = columnText(core, debitEnd, creditEnd);
       const balanceCell = columnText(core, creditEnd, viewport.width + 1);
-      const debitAmount = debitCell === "-" ? 0 : amount(debitCell);
-      const creditAmount = creditCell === "-" ? 0 : amount(creditCell);
+      const cod = iobOperationalLayout
+        ? columnText(core, codFrom, amountFrom).toUpperCase()
+        : "";
+      let debitAmount = debitCell === "-" ? 0 : amount(debitCell);
+      let creditAmount = creditCell === "-" ? 0 : amount(creditCell);
+
+      // When COD marks the side, prefer the non-empty amount column (or either).
+      if (iobOperationalLayout && (cod === "D" || cod === "C" || cod === "DR" || cod === "CR")) {
+        const value = debitAmount || creditAmount;
+        if (value > 0) {
+          debitAmount = cod.startsWith("D") ? value : 0;
+          creditAmount = cod.startsWith("C") ? value : 0;
+        }
+      }
+
       if (
         !parsedDates[0] ||
         debitAmount > 0 === creditAmount > 0 ||
@@ -532,7 +571,7 @@ async function parsePdf(file: File): Promise<Row[]> {
         transactionType: columnText(core, typeFrom, typeEnd) || undefined,
         debitAmount,
         creditAmount,
-        balanceAfter: amount(balanceCell),
+        balanceAfter: balanceAmount(balanceCell) || amount(balanceCell),
       });
     });
   }
@@ -632,7 +671,7 @@ export function StatementImportForm({
             );
             if (!currentValidation.valid) {
               setError(
-                `Statement running-balance check failed. ${currentValidation.errors.slice(0, 3).join("; ")}`,
+                statementBalanceErrorMessage(currentValidation),
               );
               return;
             }
@@ -739,16 +778,17 @@ export function StatementImportForm({
                     : format === "xlsx"
                       ? await parseXlsx(file)
                       : parseCsv(await file.text());
-                setRows(parsed);
-                if (!parsed.length)
+                const repaired = repairStatementAmountsFromBalances(parsed);
+                setRows(repaired);
+                if (!repaired.length)
                   setError(
                     "Statement rows could not be detected. Required: date, particulars/reference, debit or credit, and preferably running balance.",
                   );
                 else {
-                  const validation = validateStatementBalances(parsed);
+                  const validation = validateStatementBalances(repaired);
                   if (!validation.valid)
                     setError(
-                      `Statement running-balance check failed. ${validation.errors.slice(0, 3).join("; ")}`,
+                      statementBalanceErrorMessage(validation),
                     );
                 }
               } catch (cause) {
@@ -781,6 +821,9 @@ export function StatementImportForm({
           <p className="text-xs text-[var(--muted)]">
             Detected in statement: {detectedClosing === undefined ? "Not available" : formatMoney(detectedClosing)}
           </p>
+          <p className="text-xs text-[var(--muted)]">
+            Full unfiltered statement required; party-wise/search exports with missing transactions cannot be reconciled safely.
+          </p>
         </div>
         <div className="self-end text-sm text-[var(--muted)]">
           {rows.length} transactions ready from {sourceFormat.toUpperCase()}
@@ -803,8 +846,10 @@ export function StatementImportForm({
         <section className="space-y-3">
           <div>
             <h3 className="font-semibold">Parsed statement preview</h3>
-            <p className="text-sm font-medium text-[var(--accent)]">
-              All {rows.length} transactions will be imported.
+            <p className={balanceValidation?.valid ? "text-sm font-medium text-[var(--accent)]" : "text-sm font-medium text-[var(--danger)]"}>
+              {balanceValidation?.valid
+                ? `All ${rows.length} transactions will be imported.`
+                : `Import blocked: ${rows.length} parsed transactions do not form a complete running-balance sequence.`}
             </p>
             {balanceValidation ? (
               <p className={balanceValidation.valid ? "text-sm font-medium text-emerald-700" : "text-sm font-medium text-[var(--danger)]"}>
@@ -849,7 +894,11 @@ export function StatementImportForm({
                   : formatMoney(row.balanceAfter),
                 check?.calculatedBalance === undefined ? "—" : formatMoney(check.calculatedBalance),
                 check?.difference === undefined ? "—" : formatMoney(check.difference),
-                check?.valid ? "Matched" : check?.message ?? "Not checked",
+                check?.valid
+                  ? "Matched"
+                  : check?.difference
+                    ? `Gap: unexplained ${check.difference > 0 ? "credit" : "debit"} ${formatMoney(Math.abs(check.difference))}`
+                    : check?.message ?? "Not checked",
               ];})}
           />
         </section>

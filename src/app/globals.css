@@ -58,10 +58,62 @@ body {
 .bank-statement-grid th:nth-child(11), .bank-statement-grid td:nth-child(11) { width: 15%; }
 .bank-statement-grid th:nth-child(12), .bank-statement-grid td:nth-child(12) { width: 5%; }
 
+.cash-register-section { overflow: hidden; border: 1px solid #b9ad84; border-radius: 0.75rem; background: #fffdf3; box-shadow: 0 8px 24px rgba(65, 54, 27, 0.09); }
+.cash-register-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; padding: 1rem 1.25rem; border-bottom: 1px solid #cfc39b; background: linear-gradient(180deg, #fffef8 0%, #f6f0d9 100%); }
+.cash-register-heading h3 { font-family: var(--font-display), Georgia, serif; font-size: 1.25rem; font-weight: 700; }
+.cash-register-heading p { color: #6d654d; }
+.cash-register-kicker { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.18em; }
+.cash-register-balances { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; min-width: min(100%, 38rem); }
+.cash-register-balances span { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.55rem 0.7rem; border: 1px solid #d7cda9; border-radius: 0.4rem; background: rgba(255, 255, 255, 0.68); color: #6d654d; font-size: 0.7rem; }
+.cash-register-balances strong { color: #282318; font-size: 0.82rem; }
+.cash-register-book { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); background: #fffef8; }
+.cash-register-page { min-width: 0; }
+.cash-register-page--receipt { border-right: 4px double #8e825d; }
+.cash-register-page--payment { box-shadow: inset 12px 0 18px -18px #3f3827; }
+.cash-register-page-title { padding: 0.6rem; border-bottom: 1px solid #9f9574; background: #f3ecd3; color: #463e29; text-align: center; font-size: 0.78rem; font-weight: 800; letter-spacing: 0.08em; }
+.cash-register-page table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.72rem; }
+.cash-register-page th, .cash-register-page td { height: 2.8rem; padding: 0.35rem 0.4rem; border-right: 1px solid #bdb38f; border-bottom: 1px solid #cfc7aa; vertical-align: top; overflow-wrap: anywhere; }
+.cash-register-page th:last-child, .cash-register-page td:last-child { border-right: 0; }
+.cash-register-page thead th { height: auto; background: #faf6e7; color: #625a42; font-weight: 700; }
+.cash-register-page tfoot th { height: auto; background: #f3ecd3; text-align: right; }
+.cash-register-page tfoot th:first-child { text-align: left; }
+.cash-register-page small { display: block; margin-top: 0.2rem; color: #796f51; font-size: 0.62rem; }
+.cash-particulars { display: block; line-height: 1.25; }
+.cash-money { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+.cash-col-date { width: 15%; }
+.cash-col-voucher { width: 20%; }
+.cash-col-amount { width: 18%; }
+.cash-col-balance { width: 19%; }
+
+@media (max-width: 1100px) {
+  .cash-register-heading { align-items: stretch; flex-direction: column; }
+  .cash-register-balances { width: 100%; }
+  .cash-register-book { grid-template-columns: 1fr; }
+  .cash-register-page--receipt { border-right: 0; border-bottom: 4px double #8e825d; }
+  .cash-register-page--payment { box-shadow: none; }
+}
+
+@media (max-width: 640px) {
+  .cash-register-balances { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cash-register-page table { font-size: 0.64rem; }
+  .cash-register-page th, .cash-register-page td { padding: 0.3rem 0.25rem; }
+  .cash-col-date { width: 17%; }
+  .cash-col-voucher { width: 19%; }
+  .cash-col-amount { width: 19%; }
+  .cash-col-balance { width: 20%; }
+}
+
 @media print {
   body { background: white; }
   aside, header, form, button, .print\:hidden { display: none !important; }
   main { padding: 0 !important; }
   table { font-size: 10pt; }
   section { break-inside: avoid; }
+  .cash-register-section { box-shadow: none; border-radius: 0; }
+  .cash-register-heading { padding: 0.5rem; }
+  .cash-register-balances span { padding: 0.25rem; }
+  .cash-register-book { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .cash-register-page--receipt { border-right: 4px double #444; border-bottom: 0; }
+  .cash-register-page table { font-size: 7pt; }
+  .cash-register-page th, .cash-register-page td { height: 22px; padding: 2px 3px; }
 }
