@@ -30,22 +30,132 @@ function amount(value: unknown): number {
   const parsed = Number(
     String(value ?? "")
       .replace(/[₹,\s]/g, "")
+      .replace(/\b(dr|cr|debit|credit|wdl|deposit)\b/gi, "")
       .replace(/\((.+)\)/, "-$1"),
   );
   return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
 }
 
+function signedAmount(value: unknown): number | null {
+  const parsed = Number(
+    String(value ?? "")
+      .replace(/[₹,\s]/g, "")
+      .replace(/\b(dr|cr|debit|credit|wdl|deposit)\b/gi, "")
+      .replace(/\((.+)\)/, "-$1"),
+  );
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeHeader(cell: unknown): string {
+  return String(cell ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+}
+
+function isDebitHeader(header: string): boolean {
+  if (!header) return false;
+  if (header.includes("credit") || header.includes("deposit")) return false;
+  return (
+    header === "dr" ||
+    header.includes("debit") ||
+    header.includes("withdrawal") ||
+    header.includes("withdraw")
+  );
+}
+
+function isCreditHeader(header: string): boolean {
+  if (!header) return false;
+  if (header.includes("debit") || header.includes("withdraw")) return false;
+  return (
+    header === "cr" ||
+    header.includes("credit") ||
+    header.includes("deposit")
+  );
+}
+
+function isAmountHeader(header: string): boolean {
+  if (!header) return false;
+  if (isDebitHeader(header) || isCreditHeader(header)) return false;
+  if (header.includes("balance")) return false;
+  return (
+    header === "amount" ||
+    header === "txnamount" ||
+    header === "transactionamount" ||
+    header === "amt" ||
+    header.endsWith("amount") ||
+    header.includes("amountinr")
+  );
+}
+
+function isDrCrTypeHeader(header: string): boolean {
+  if (!header) return false;
+  return (
+    header === "drc" ||
+    header === "drcr" ||
+    header === "crdr" ||
+    header === "debitcredit" ||
+    header === "creditdebit" ||
+    header === "drcrflag" ||
+    header === "cdflag" ||
+    header === "debitorcredit" ||
+    header === "creditordebit"
+  );
+}
+
+function isChannelTypeHeader(header: string): boolean {
+  if (!header || isDrCrTypeHeader(header)) return false;
+  return (
+    header === "transactiontype" ||
+    header === "txntype" ||
+    header === "mode" ||
+    header === "channel" ||
+    header === "type"
+  );
+}
+
+function classifyDrCr(value: unknown): "debit" | "credit" | null {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) return null;
+  if (/^(dr|debit|wdl|withdrawal|withdraw|d)$/i.test(raw)) return "debit";
+  if (/^(cr|credit|dep|deposit|c)$/i.test(raw)) return "credit";
+  if (/\b(dr|debit|withdrawal|withdraw)\b/i.test(raw) && !/\b(cr|credit|deposit)\b/i.test(raw))
+    return "debit";
+  if (/\b(cr|credit|deposit)\b/i.test(raw) && !/\b(dr|debit|withdrawal)\b/i.test(raw))
+    return "credit";
+  return null;
+}
+
 function isoDate(value: unknown): string {
-  if (value instanceof Date && !Number.isNaN(value.valueOf()))
-    return value.toISOString().slice(0, 10);
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // Excel serial dates (approx 1955–2119).
+    if (value > 20000 && value < 80000) {
+      const utc = Date.UTC(1899, 11, 30) + Math.round(value) * 86400000;
+      return new Date(utc).toISOString().slice(0, 10);
+    }
+  }
   const raw = String(value ?? "").trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  const numeric = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
+  const numeric = raw.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
   if (numeric) {
     const year = numeric[3].length === 2 ? `20${numeric[3]}` : numeric[3];
-    return `${year}-${numeric[2].padStart(2, "0")}-${numeric[1].padStart(2, "0")}`;
+    const day = Number(numeric[1]);
+    const month = Number(numeric[2]);
+    // Prefer DD/MM/YYYY (India); fall back if month looks invalid.
+    if (month >= 1 && month <= 12) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+    if (day >= 1 && day <= 12) {
+      return `${year}-${String(day).padStart(2, "0")}-${String(month).padStart(2, "0")}`;
+    }
   }
-  const named = raw.match(/^(\d{1,2})[\/-]([A-Za-z]{3})[\/-](\d{2,4})/);
+  const named = raw.match(/^(\d{1,2})[\/\-.\s]([A-Za-z]{3})[\/\-.\s](\d{2,4})/);
   if (!named) return "";
   const months: Record<string, string> = {
     jan: "01",
@@ -68,91 +178,184 @@ function isoDate(value: unknown): string {
 }
 
 function datesIn(value: unknown): string[] {
-  if (value instanceof Date) return [isoDate(value)].filter(Boolean);
+  if (value instanceof Date || typeof value === "number") {
+    const parsed = isoDate(value);
+    return parsed ? [parsed] : [];
+  }
   const matches =
     String(value ?? "").match(
-      /\d{4}-\d{2}-\d{2}|\d{1,2}[\/-](?:\d{1,2}|[A-Za-z]{3})[\/-]\d{2,4}/g,
+      /\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-.](?:\d{1,2}|[A-Za-z]{3})[\/\-.]\d{2,4}/g,
     ) ?? [];
   return matches.map(isoDate).filter(Boolean);
 }
 
 function rowsFromGrid(grid: unknown[][]): Row[] {
   if (grid.length < 2) return [];
-  const headerIndex = grid.findIndex(
-    (row) =>
-      row.some((cell) => /date/i.test(String(cell))) &&
-      row.some((cell) => /(debit|withdrawal|dr)/i.test(String(cell))) &&
-      row.some((cell) => /(credit|deposit|cr)/i.test(String(cell))),
-  );
-  if (headerIndex < 0) return [];
-  const headers = grid[headerIndex].map((cell) =>
-    String(cell ?? "")
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z]/g, ""),
-  );
-  const find = (...names: string[]) =>
-    headers.findIndex((header) =>
-      names.some(
-        (name) => header === name || header.includes(name.toLowerCase()),
-      ),
+  const headerIndex = grid.findIndex((row) => {
+    const headers = row.map(normalizeHeader);
+    const hasDate = headers.some((header) => header.includes("date"));
+    const hasDebit = headers.some(isDebitHeader);
+    const hasCredit = headers.some(isCreditHeader);
+    const hasAmount = headers.some(isAmountHeader);
+    const hasType = headers.some(isDrCrTypeHeader);
+    return (
+      hasDate &&
+      ((hasDebit && hasCredit) ||
+        (hasAmount && (hasType || hasDebit || hasCredit)) ||
+        hasAmount)
     );
-  const date = find("transactiondate", "txndate", "date");
-  const valueDate = find("valuedate");
-  const particulars = find(
+  });
+  if (headerIndex < 0) return [];
+  const headers = grid[headerIndex].map(normalizeHeader);
+  const findIncludes = (...names: string[]) =>
+    headers.findIndex((header) =>
+      names.some((name) => header === name || header.includes(name)),
+    );
+  const dateCol = (() => {
+    const ranked = [
+      "transactiondate",
+      "txndate",
+      "trandate",
+      "txdate",
+      "date",
+      "valuedate",
+    ];
+    for (const name of ranked) {
+      const index = headers.findIndex(
+        (header) =>
+          header === name || (name !== "date" && header.includes(name)),
+      );
+      if (index >= 0) return index;
+    }
+    return headers.findIndex((header) => header.includes("date"));
+  })();
+  const valueDate = headers.findIndex(
+    (header) => header === "valuedate" || header.includes("valuedate"),
+  );
+  const particulars = findIncludes(
     "particulars",
     "description",
     "narration",
     "remarks",
+    "details",
+    "narrative",
   );
-  const reference = find(
-    "referenceno",
-    "reference",
-    "refno",
-    "ref",
-    "chequeno",
-    "chqno",
-    "utr",
-  );
-  const transactionType = find("transactiontype", "txntype", "mode", "channel");
-  const debit = find("debitamount", "debit", "withdrawal", "dramount");
-  const credit = find("creditamount", "credit", "deposit", "cramount");
-  const balance = find("runningbalance", "closingbalance", "balance");
-  return grid.slice(headerIndex + 1).flatMap((cells) => {
-    const combinedDates = datesIn(cells[date]);
-    const txnDate = combinedDates[0] ?? isoDate(cells[date]);
+  const reference = (() => {
+    const ranked = [
+      "referenceno",
+      "chequeno",
+      "chqno",
+      "chqrefno",
+      "utrnumber",
+      "utr",
+      "refno",
+      "reference",
+    ];
+    for (const name of ranked) {
+      const index = headers.findIndex(
+        (header) => header === name || header.includes(name),
+      );
+      if (index >= 0) return index;
+    }
+    return headers.findIndex(
+      (header) =>
+        (header.includes("ref") ||
+          header.includes("chq") ||
+          header.includes("cheque")) &&
+        !header.includes("date"),
+    );
+  })();
+  const drCrCol = headers.findIndex(isDrCrTypeHeader);
+  const channelType = headers.findIndex(isChannelTypeHeader);
+  const debit = headers.findIndex(isDebitHeader);
+  const credit = headers.findIndex(isCreditHeader);
+  const amountCol = headers.findIndex(isAmountHeader);
+  const balance = (() => {
+    const ranked = ["runningbalance", "balance", "closingbalance", "bal"];
+    for (const name of ranked) {
+      const index = headers.findIndex(
+        (header) =>
+          header === name ||
+          (header.includes(name) && !header.includes("opening")),
+      );
+      if (index >= 0) return index;
+    }
+    return -1;
+  })();
+
+  const rows: Row[] = [];
+  let previousBalance: number | undefined;
+  for (const cells of grid.slice(headerIndex + 1)) {
+    if (dateCol < 0) continue;
+    const combinedDates = datesIn(cells[dateCol]);
+    const txnDate = combinedDates[0] ?? isoDate(cells[dateCol]);
     const parsedValueDate =
-      valueDate >= 0 && valueDate !== date
+      valueDate >= 0 && valueDate !== dateCol
         ? isoDate(cells[valueDate])
         : combinedDates[1];
-    const debitAmount = amount(cells[debit]);
-    const creditAmount = amount(cells[credit]);
-    if (!txnDate || debitAmount > 0 === creditAmount > 0) return [];
-    return [
-      {
-        txnDate,
-        valueDate: parsedValueDate || undefined,
-        description:
-          particulars >= 0
-            ? String(cells[particulars] ?? "").trim()
-            : undefined,
-        reference:
-          reference >= 0 ? String(cells[reference] ?? "").trim() : undefined,
-        transactionType:
-          transactionType >= 0
-            ? String(cells[transactionType] ?? "").trim()
-            : debitAmount > 0
-              ? "Debit"
-              : "Credit",
-        debitAmount,
-        creditAmount,
-        balanceAfter:
-          balance >= 0 && cells[balance] !== ""
-            ? amount(cells[balance])
-            : undefined,
-      },
-    ];
-  });
+
+    let debitAmount = debit >= 0 ? amount(cells[debit]) : 0;
+    let creditAmount = credit >= 0 ? amount(cells[credit]) : 0;
+    const balanceAfter =
+      balance >= 0 && cells[balance] !== "" && cells[balance] != null
+        ? amount(cells[balance])
+        : undefined;
+
+    if (debitAmount === 0 && creditAmount === 0 && amountCol >= 0) {
+      const abs = amount(cells[amountCol]);
+      const typeHint =
+        drCrCol >= 0
+          ? classifyDrCr(cells[drCrCol])
+          : classifyDrCr(cells[amountCol]);
+      const signed = signedAmount(cells[amountCol]);
+      if (typeHint === "debit") debitAmount = abs;
+      else if (typeHint === "credit") creditAmount = abs;
+      else if (
+        previousBalance !== undefined &&
+        balanceAfter !== undefined &&
+        abs > 0
+      ) {
+        const delta = Number((balanceAfter - previousBalance).toFixed(4));
+        if (Math.abs(Math.abs(delta) - abs) < 0.0001) {
+          if (delta < 0) debitAmount = abs;
+          else if (delta > 0) creditAmount = abs;
+        }
+      } else if (signed !== null && signed < 0) {
+        debitAmount = Math.abs(signed);
+      } else if (signed !== null && signed > 0 && drCrCol >= 0) {
+        // Only guess positive=credit when an explicit Dr/Cr column exists but cell was empty.
+        creditAmount = signed;
+      }
+    }
+
+    if (balanceAfter !== undefined) previousBalance = balanceAfter;
+    if (!txnDate || debitAmount > 0 === creditAmount > 0) continue;
+
+    const channel =
+      channelType >= 0
+        ? String(cells[channelType] ?? "").trim()
+        : drCrCol >= 0
+          ? String(cells[drCrCol] ?? "").trim()
+          : "";
+
+    rows.push({
+      txnDate,
+      valueDate: parsedValueDate || undefined,
+      description:
+        particulars >= 0
+          ? String(cells[particulars] ?? "").trim() || undefined
+          : undefined,
+      reference:
+        reference >= 0
+          ? String(cells[reference] ?? "").trim() || undefined
+          : undefined,
+      transactionType: channel || (debitAmount > 0 ? "Debit" : "Credit"),
+      debitAmount,
+      creditAmount,
+      balanceAfter,
+    });
+  }
+  return rows;
 }
 
 function parseCsv(text: string): Row[] {
@@ -182,16 +385,48 @@ function parseCsv(text: string): Row[] {
 
 async function parseXlsx(file: File): Promise<Row[]> {
   const XLSX = await import("xlsx");
-  const workbook = XLSX.read(await file.arrayBuffer(), {
-    type: "array",
-    cellDates: true,
-  });
-  return rowsFromGrid(
-    XLSX.utils.sheet_to_json<unknown[]>(
-      workbook.Sheets[workbook.SheetNames[0]],
-      { header: 1, raw: true, defval: "" },
-    ),
-  );
+  const buffer = await file.arrayBuffer();
+  const tryBook = (workbook: {
+    SheetNames: string[];
+    Sheets: Record<string, object>;
+  }) => {
+    let best: Row[] = [];
+    for (const name of workbook.SheetNames) {
+      const grid = XLSX.utils.sheet_to_json<unknown[]>(
+        workbook.Sheets[name] as never,
+        {
+          header: 1,
+          raw: true,
+          defval: "",
+        },
+      );
+      const rows = rowsFromGrid(grid);
+      if (rows.length > best.length) best = rows;
+    }
+    return best;
+  };
+
+  let best: Row[] = [];
+  try {
+    best = tryBook(
+      XLSX.read(buffer, { type: "array", cellDates: true }),
+    );
+  } catch {
+    best = [];
+  }
+
+  // Many Indian bank portals download HTML tables named .xls/.xlsx.
+  if (best.length === 0) {
+    const text = new TextDecoder("utf-8").decode(buffer);
+    if (/<html|<table/i.test(text)) {
+      try {
+        best = tryBook(XLSX.read(text, { type: "string", cellDates: true }));
+      } catch {
+        /* keep empty */
+      }
+    }
+  }
+  return best;
 }
 
 async function parsePdf(file: File): Promise<Row[]> {
