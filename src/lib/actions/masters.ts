@@ -71,12 +71,8 @@ export async function createCompany(
     can_manage: true,
   });
 
-  const rpcSeed = await supabase.rpc("seed_company_account_groups", {
-    p_company_id: data.id,
-  });
-  if (rpcSeed.error) {
-    await insertBusyAccountGroups(supabase, data.id);
-  }
+  const seeded = await insertBusyAccountGroups(supabase as never, data.id);
+  if (!seeded.ok) return fail(seeded.error);
 
   const cashHeadCode = parsed.data.cashHeadCode || "BS-CASH";
   const bankHeadCode = parsed.data.bankHeadCode || "BS-BANK";
@@ -402,13 +398,8 @@ export async function seedBusyAccountGroups(
   if (!access.ok) return access;
 
   const supabase = await createClient();
-  const rpcSeed = await supabase.rpc("seed_company_account_groups", {
-    p_company_id: parsed.data,
-  });
-  if (rpcSeed.error) {
-    const inserted = await insertBusyAccountGroups(supabase, parsed.data);
-    if (!inserted.ok) return fail(inserted.error);
-  }
+  const inserted = await insertBusyAccountGroups(supabase as never, parsed.data);
+  if (!inserted.ok) return fail(inserted.error);
 
   revalidatePath("/masters/account-groups");
   revalidatePath("/masters/ledgers");
@@ -433,13 +424,8 @@ export async function seedBusyAccountGroupsForAllCompanies(): Promise<
   if (error) return fail(error.message);
 
   for (const company of companies ?? []) {
-    const rpcSeed = await supabase.rpc("seed_company_account_groups", {
-      p_company_id: company.id,
-    });
-    if (rpcSeed.error) {
-      const inserted = await insertBusyAccountGroups(supabase, company.id);
-      if (!inserted.ok) return fail(inserted.error);
-    }
+    const inserted = await insertBusyAccountGroups(supabase as never, company.id);
+    if (!inserted.ok) return fail(inserted.error);
   }
 
   revalidatePath("/masters/account-groups");
@@ -579,7 +565,7 @@ export async function createParty(
 
     let accountGroupId = parsed.data.accountGroupId || null;
     if (!accountGroupId) {
-      await insertBusyAccountGroups(supabase, parsed.data.companyId);
+      await insertBusyAccountGroups(supabase as never, parsed.data.companyId);
       const preferred = parsed.data.partyKinds.includes("customer")
         ? "BS-DEB"
         : parsed.data.partyKinds.includes("supplier")

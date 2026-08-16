@@ -67,24 +67,24 @@ export const BUSY_ACCOUNT_GROUPS: {
   { code: "PL-DISCA", name: "Discount Allowed", nature: "expense", parentCode: "PL-IE", bsPlSection: "Indirect Expenses", cashFlowCategory: "operating", workingCapitalClass: null, isIntercompany: false },
 ];
 
-type AccountGroupClient = {
-  from: (table: "account_groups") => {
-    select: (columns: string) => {
-      eq: (column: string, value: string) => {
-        eq: (column: string, value: string) => {
-          maybeSingle: () => Promise<{ data: { id: string } | null }>;
-        };
-      };
-    };
-    insert: (values: Record<string, unknown>) => Promise<{ error: { message: string; code?: string } | null }>;
-  };
-};
-
 export async function insertBusyAccountGroups(
-  supabase: AccountGroupClient | { from: (table: string) => unknown },
+  supabase: { from: (table: string) => unknown },
   companyId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const client = supabase as AccountGroupClient;
+  const client = supabase as {
+    from: (table: string) => {
+      select: (columns: string) => {
+        eq: (column: string, value: string) => {
+          eq: (column: string, value: string) => {
+            maybeSingle: () => Promise<{ data: { id: string } | null }>;
+          };
+        };
+      };
+      insert: (values: Record<string, unknown>) => Promise<{
+        error: { message: string; code?: string } | null;
+      }>;
+    };
+  };
   for (const group of BUSY_ACCOUNT_GROUPS) {
     let parentId: string | null = null;
     if (group.parentCode) {
