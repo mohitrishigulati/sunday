@@ -35,6 +35,7 @@ export function CashEntryForm({
   parties: Party[];
   mode?: "both" | "receipt" | "payment";
 }) {
+  const router = useRouter();
   const [companyId, setCompanyId] = useState("");
   const [locationId, setLocationId] = useState("");
   const [financialYearId, setFinancialYearId] = useState("");
@@ -55,10 +56,10 @@ export function CashEntryForm({
   );
   const allParties = useMemo(
     () =>
-      [...partiesList].sort((a, b) =>
-        a.name.localeCompare(b.name) || a.code.localeCompare(b.code),
-      ),
-    [partiesList],
+      [...partiesList]
+        .filter((party) => !company || party.group_id === company.group_id)
+        .sort((a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code)),
+    [partiesList, company],
   );
   const otherLedgers = useMemo(
     () =>
@@ -88,6 +89,10 @@ export function CashEntryForm({
   }
 
   function save(kind: "receipt" | "payment", formData: FormData) {
+    if (!companyId || !locationId || !financialYearId || !voucherDate) {
+      setError("Pehle company, cash register, financial year aur date select karo.");
+      return;
+    }
     startTransition(async () => {
       setError(null);
       setSuccess(null);
@@ -110,9 +115,10 @@ export function CashEntryForm({
       }
       setSuccess(
         kind === "receipt"
-          ? "Receipt line saved as draft. Approve/post from the queue below."
-          : "Payment line saved as draft. Approve/post from the queue below.",
+          ? "Receipt saved. Neeche Draft queue mein dikhegi — posted register ke liye approve/post karo."
+          : "Payment saved. Neeche Draft queue mein dikhegi — posted register ke liye approve/post karo.",
       );
+      router.refresh();
     });
   }
 
@@ -147,6 +153,13 @@ export function CashEntryForm({
         </Select>
         <Input label="Date" type="date" required value={voucherDate} onChange={(event) => setVoucherDate(event.target.value)} />
       </div>
+      {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
+      {success ? <p className="text-sm text-[var(--accent)]">{success}</p> : null}
+      {!ready ? (
+        <p className="text-sm text-[var(--muted)]">
+          Pehle company, cash register, financial year aur date select karo — phir Save dabao.
+        </p>
+      ) : null}
       {ready ? (
         <div>
           <Button
@@ -168,6 +181,7 @@ export function CashEntryForm({
                   return;
                 }
                 setSuccess("4 cash entries saved as draft (2 received, 2 paid). Approve/post queue mein dekho.");
+                router.refresh();
               })
             }
           >
@@ -190,10 +204,11 @@ export function CashEntryForm({
             side="receipt"
             title="RECEIPTS / प्राप्तियाँ"
             partyLabel="Received from"
-            saveDisabled={!ready || pending}
+            saveDisabled={pending}
             parties={allParties}
             ledgers={otherLedgers}
             groupId={company?.group_id ?? ""}
+            companyId={companyId}
             onPartyCreated={(party) => setPartiesList((current) => [party, ...current.filter((item) => item.id !== party.id)])}
             onSave={(formData) => save("receipt", formData)}
           />
@@ -203,23 +218,17 @@ export function CashEntryForm({
             side="payment"
             title="PAYMENTS / भुगतान"
             partyLabel="Paid to"
-            saveDisabled={!ready || pending}
+            saveDisabled={pending}
             parties={allParties}
             ledgers={otherLedgers}
             groupId={company?.group_id ?? ""}
+            companyId={companyId}
             onPartyCreated={(party) => setPartiesList((current) => [party, ...current.filter((item) => item.id !== party.id)])}
             onSave={(formData) => save("payment", formData)}
           />
           ) : null}
         </div>
       </div>
-      {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
-      {success ? <p className="text-sm text-[var(--accent)]">{success}</p> : null}
-      {!ready ? (
-        <p className="text-sm text-[var(--muted)]">
-          Pehle company, cash register, financial year aur date select karo.
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -232,6 +241,7 @@ function RegisterEntryColumn({
   parties,
   ledgers,
   groupId,
+  companyId,
   onPartyCreated,
   onSave,
 }: {
@@ -242,6 +252,7 @@ function RegisterEntryColumn({
   parties: Party[];
   ledgers: Ledger[];
   groupId: string;
+  companyId: string;
   onPartyCreated: (party: Party) => void;
   onSave: (formData: FormData) => void;
 }) {
@@ -267,7 +278,10 @@ function RegisterEntryColumn({
   return (
     <form
       className={`cash-register-page cash-register-page--${side} space-y-3 p-4`}
-      action={onSave}
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave(new FormData(event.currentTarget));
+      }}
     >
       <div className="cash-register-page-title">{title}</div>
       <Input
@@ -350,7 +364,7 @@ function RegisterEntryColumn({
                   const code = (document.getElementById(`${side}-code`) as HTMLInputElement | null)?.value.trim() ?? "";
                   const name = (document.getElementById(`${side}-name`) as HTMLInputElement | null)?.value.trim() ?? "";
                   const kinds = header === "debtor" ? ["customer" as const] : header === "creditor" ? ["supplier" as const] : ["expense" as const];
-                  const created = await createParty({ groupId, code, name, partyKinds: kinds, creditDays: 0 });
+                  const created = await createParty({ groupId, code, name, partyKinds: kinds, creditDays: 0, companyId: companyId || undefined });
                   if (!created.ok) {
                     setAddError(created.error);
                     return;

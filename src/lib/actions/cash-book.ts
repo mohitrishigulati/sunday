@@ -5,6 +5,9 @@ import { z } from "zod";
 import { assertCompanyAccess, assertLocationAccess, assertPermission, requireUser } from "@/lib/auth/guards";
 import { createClient } from "@/lib/supabase/server";
 import { fail, ok, type ActionResult } from "@/lib/types";
+import { defaultPartyHeadCode, insertBusyAccountGroups } from "@/lib/busy-account-groups";
+
+type Db = Awaited<ReturnType<typeof createClient>>;
 
 const cashEntrySchema = z.object({
   companyId: z.string().uuid(),
@@ -14,11 +17,95 @@ const cashEntrySchema = z.object({
   entryKind: z.enum(["receipt", "payment"]),
   counterpartyLedgerId: z.string().uuid().optional(),
   partyId: z.string().uuid().optional(),
-  amount: z.number().positive(),
+  amount: z.coerce.number().positive(),
   narration: z.string().min(1),
 }).refine((value) => Boolean(value.partyId || value.counterpartyLedgerId), {
   message: "Select Received from / Paid to party, or a ledger",
 });
+
+async function ensureCashVoucherType(supabase: Db, companyId: string, code: "CASH-R" | "CASH-P") {
+  const first = await supabase
+    .from("voucher_types")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("code", code)
+    .maybeSingle();
+  if (first.data) return first.data;
+  await supabase.rpc("seed_company_voucher_types", { p_company_id: companyId });
+  const again = await supabase
+    .from("voucher_types")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("code", code)
+    .maybeSingle();
+  return again.data;
+}
+
+async function ensurePartyLedger(supabase: Db, companyId: string, partyId: string): Promise<string | null> {
+  const { data: link } = await supabase
+    .from("party_company_links")
+    .select("ledger_id")
+    .eq("party_id", partyId)
+    .eq("company_id", companyId)
+    .maybeSingle();
+  if (link?.ledger_id) return link.ledger_id;
+
+  const { data: existing } = await supabase
+    .from("ledgers")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("party_id", partyId)
+    .eq("is_active", true)
+    .is("deleted_at", null)
+    .limit(1);
+  if (existing?.[0]?.id) {
+    await supabase.from("party_company_links").upsert(
+      { party_id: partyId, company_id: companyId, ledger_id: existing[0].id },
+      { onConflict: "party_id,company_id" },
+    );
+    return existing[0].id;
+  }
+
+  const { data: party } = await supabase
+    .from("parties")
+    .select("id, code, name, party_kinds")
+    .eq("id", partyId)
+    .maybeSingle();
+  if (!party) return null;
+
+  await insertBusyAccountGroups(supabase as never, companyId);
+  const { data: group } = await supabase
+    .from("account_groups")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("code", defaultPartyHeadCode(party.party_kinds as string[] | undefined))
+    .maybeSingle();
+
+  const codes = [party.code.toUpperCase(), `${party.code.toUpperCase()}-P`];
+  for (const code of codes) {
+    const { data: ledger, error } = await supabase
+      .from("ledgers")
+      .insert({
+        company_id: companyId,
+        account_group_id: group?.id ?? null,
+        code,
+        name: party.name,
+        ledger_type: "party",
+        party_id: party.id,
+        is_intercompany: false,
+      })
+      .select("id")
+      .single();
+    if (!error && ledger) {
+      await supabase.from("party_company_links").upsert(
+        { party_id: partyId, company_id: companyId, ledger_id: ledger.id },
+        { onConflict: "party_id,company_id" },
+      );
+      return ledger.id;
+    }
+  }
+  return null;
+}
 
 export async function createCashBookEntry(
   input: z.infer<typeof cashEntrySchema>,
@@ -38,45 +125,26 @@ export async function createCashBookEntry(
   if (!locationAccess.ok) return locationAccess;
 
   const supabase = await createClient();
-  const [{ data: location, error: locationError }, { data: voucherType, error: typeError }] = await Promise.all([
+  const [{ data: location, error: locationError }, voucherType] = await Promise.all([
     supabase
       .from("locations")
       .select("company_id, cash_ledger_id, is_cash_location")
       .eq("id", data.locationId)
       .maybeSingle(),
-    supabase
-      .from("voucher_types")
-      .select("id")
-      .eq("company_id", data.companyId)
-      .eq("code", data.entryKind === "receipt" ? "CASH-R" : "CASH-P")
-      .maybeSingle(),
+    ensureCashVoucherType(supabase, data.companyId, data.entryKind === "receipt" ? "CASH-R" : "CASH-P"),
   ]);
 
   if (locationError || !location || location.company_id !== data.companyId || !location.is_cash_location || !location.cash_ledger_id) {
     return fail("Select a cash location with an assigned cash ledger");
   }
-  if (typeError || !voucherType) return fail("Cash voucher type is not configured for this company");
+  if (!voucherType) return fail("Cash voucher type is not configured for this company");
 
   let counterpartyLedgerId = data.counterpartyLedgerId;
   let partyId = data.partyId ?? null;
   if (data.partyId) {
-    const { data: link } = await supabase
-      .from("party_company_links")
-      .select("ledger_id")
-      .eq("party_id", data.partyId)
-      .eq("company_id", data.companyId)
-      .maybeSingle();
-    const { data: partyLedgers } = await supabase
-      .from("ledgers")
-      .select("id")
-      .eq("company_id", data.companyId)
-      .eq("party_id", data.partyId)
-      .eq("is_active", true)
-      .is("deleted_at", null)
-      .limit(1);
-    counterpartyLedgerId = link?.ledger_id ?? partyLedgers?.[0]?.id ?? counterpartyLedgerId;
+    counterpartyLedgerId = (await ensurePartyLedger(supabase, data.companyId, data.partyId)) ?? counterpartyLedgerId;
     if (!counterpartyLedgerId) {
-      return fail("Is party ka ledger is company mein nahi hai. Party Master mein company link / ledger banao, ya Other ledger select karo.");
+      return fail("Is party ka ledger is company mein nahi hai. Other ledger select karo, ya Party Master mein ledger banao.");
     }
   }
   if (!counterpartyLedgerId) return fail("Select Received from / Paid to");
