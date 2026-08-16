@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createCashBookEntry, createFourSampleCashEntries } from "@/lib/actions/cash-book";
 import { createParty } from "@/lib/actions/masters";
@@ -12,13 +12,6 @@ type Location = { id: string; company_id: string; code: string; name: string; ca
 type FinancialYear = { id: string; company_id: string; code: string; start_date?: string; end_date?: string };
 type Ledger = { id: string; company_id: string; party_id: string | null; code: string; name: string; ledger_type: string };
 type Party = { id: string; group_id: string; code: string; name: string; party_kinds?: string[] };
-
-function headerOf(kinds: string[] | undefined) {
-  if (kinds?.includes("expense")) return "expense";
-  if (kinds?.includes("customer")) return "debtor";
-  if (kinds?.includes("supplier")) return "creditor";
-  return "other";
-}
 
 export function CashEntryForm({
   companies,
@@ -61,16 +54,25 @@ export function CashEntryForm({
         .sort((a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code)),
     [partiesList, company],
   );
+  const shownParties = allParties.length ? allParties : [...partiesList].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code),
+  );
   const otherLedgers = useMemo(
     () =>
       ledgers.filter(
         (ledger) =>
-          ledger.company_id === companyId &&
-          ledger.ledger_type !== "cash" &&
-          !ledger.party_id,
+          (!companyId || ledger.company_id === companyId) &&
+          ledger.ledger_type !== "cash",
       ),
     [ledgers, companyId],
   );
+
+  useEffect(() => {
+    if (!companyId && companies[0]) {
+      selectCompany(companies[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- first company only
+  }, [companies]);
 
   function selectCompany(nextId: string) {
     setCompanyId(nextId);
@@ -135,7 +137,7 @@ export function CashEntryForm({
             </option>
           ))}
         </Select>
-        <Select label="Cash register / location" required disabled={!companyId} value={locationId} onChange={(event) => setLocationId(event.target.value)}>
+        <Select label="Cash register / location" required value={locationId} onChange={(event) => setLocationId(event.target.value)}>
           <option value="">Select</option>
           {cashLocations.map((item) => (
             <option key={item.id} value={item.id}>
@@ -143,7 +145,7 @@ export function CashEntryForm({
             </option>
           ))}
         </Select>
-        <Select label="Financial year" required disabled={!companyId} value={financialYearId} onChange={(event) => setFinancialYearId(event.target.value)}>
+        <Select label="Financial year" required value={financialYearId} onChange={(event) => setFinancialYearId(event.target.value)}>
           <option value="">Select</option>
           {years.map((item) => (
             <option key={item.id} value={item.id}>
@@ -155,9 +157,15 @@ export function CashEntryForm({
       </div>
       {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
       {success ? <p className="text-sm text-[var(--accent)]">{success}</p> : null}
+      <ol className="list-decimal space-y-1 rounded-lg border border-[var(--border)] bg-white px-5 py-3 text-sm text-[var(--ink)]">
+        <li>Upar company / cash register / year / date confirm karo (auto-select ho jata hai).</li>
+        <li>Neeche party ki line pe <strong>click</strong> karo — dropdown nahi, list se choose karo.</li>
+        <li>Amount bharo.</li>
+        <li>Left = cash aaya (Save received from). Right = cash gaya (Save paid to).</li>
+      </ol>
       {!ready ? (
-        <p className="text-sm text-[var(--muted)]">
-          Pehle company, cash register, financial year aur date select karo — phir Save dabao.
+        <p className="text-sm text-[var(--danger)]">
+          Company ya cash register missing hai. Masters mein company + cash location banao.
         </p>
       ) : null}
       {ready ? (
@@ -195,7 +203,7 @@ export function CashEntryForm({
           <div>
             <p className="cash-register-kicker">CASH REGISTER ENTRY</p>
             <h3>Received from / Paid to</h3>
-            <p>Left side = cash aaya. Right side = cash gaya. Party ka naam select karo.</p>
+            <p>Party ki line pe click karo. Dropdown se select nahi — list se tap karo.</p>
           </div>
         </div>
         <div className={`cash-register-book${mode === "both" ? "" : " cash-register-book--single"}`}>
@@ -205,7 +213,7 @@ export function CashEntryForm({
             title="RECEIPTS / प्राप्तियाँ"
             partyLabel="Received from"
             saveDisabled={pending}
-            parties={allParties}
+            parties={shownParties}
             ledgers={otherLedgers}
             groupId={company?.group_id ?? ""}
             companyId={companyId}
@@ -219,7 +227,7 @@ export function CashEntryForm({
             title="PAYMENTS / भुगतान"
             partyLabel="Paid to"
             saveDisabled={pending}
-            parties={allParties}
+            parties={shownParties}
             ledgers={otherLedgers}
             groupId={company?.group_id ?? ""}
             companyId={companyId}
@@ -263,6 +271,7 @@ function RegisterEntryColumn({
     side === "receipt" ? "debtor" : "creditor",
   );
   const [selectedPartyId, setSelectedPartyId] = useState("");
+  const [selectedLedgerId, setSelectedLedgerId] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   const [addPending, startAdd] = useTransition();
   const needle = query.trim().toLowerCase();
@@ -270,10 +279,6 @@ function RegisterEntryColumn({
     if (party.id === selectedPartyId) return true;
     return !needle || `${party.code} ${party.name}`.toLowerCase().includes(needle);
   });
-  const debtors = visible.filter((party) => headerOf(party.party_kinds) === "debtor");
-  const creditors = visible.filter((party) => headerOf(party.party_kinds) === "creditor");
-  const expenses = visible.filter((party) => headerOf(party.party_kinds) === "expense");
-  const others = visible.filter((party) => headerOf(party.party_kinds) === "other");
 
   return (
     <form
@@ -284,65 +289,55 @@ function RegisterEntryColumn({
       }}
     >
       <div className="cash-register-page-title">{title}</div>
+      <input type="hidden" name="partyId" value={selectedPartyId} />
+      <input type="hidden" name="ledgerId" value={selectedLedgerId} />
       <Input
         label="Search party"
         value={query}
         placeholder="Type name or code"
         onChange={(event) => setQuery(event.target.value)}
       />
-      <Select
-        label={partyLabel}
-        name="partyId"
-        value={selectedPartyId}
-        onChange={(event) => {
-          if (event.target.value === "__new") {
+      <div>
+        <p className="mb-1 text-sm font-medium">{partyLabel}</p>
+        <div className="max-h-52 overflow-y-auto rounded-md border border-[var(--border)] bg-white">
+          {visible.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-[var(--muted)]">
+              {parties.length === 0
+                ? "Koi party nahi. Neeche + New party dabao."
+                : "Is search se koi party nahi mili."}
+            </p>
+          ) : (
+            visible.map((party) => (
+              <button
+                key={party.id}
+                type="button"
+                className={`block w-full border-b border-[var(--border)] px-3 py-2 text-left text-sm last:border-b-0 ${
+                  selectedPartyId === party.id
+                    ? "bg-[var(--accent)] text-white"
+                    : "hover:bg-[var(--surface-2)]"
+                }`}
+                onClick={() => {
+                  setAdding(false);
+                  setSelectedPartyId(party.id);
+                  setSelectedLedgerId("");
+                }}
+              >
+                {party.code} — {party.name}
+              </button>
+            ))
+          )}
+        </div>
+        <button
+          type="button"
+          className="mt-1 text-sm font-medium text-[var(--accent)]"
+          onClick={() => {
             setAdding(true);
             setSelectedPartyId("");
-            return;
-          }
-          setAdding(false);
-          setSelectedPartyId(event.target.value);
-        }}
-      >
-        <option value="">Select party ({parties.length})</option>
-        {debtors.length ? (
-          <optgroup label="Debtor">
-            {debtors.map((party) => (
-              <option key={party.id} value={party.id}>
-                {party.code} — {party.name}
-              </option>
-            ))}
-          </optgroup>
-        ) : null}
-        {creditors.length ? (
-          <optgroup label="Creditor">
-            {creditors.map((party) => (
-              <option key={party.id} value={party.id}>
-                {party.code} — {party.name}
-              </option>
-            ))}
-          </optgroup>
-        ) : null}
-        {expenses.length ? (
-          <optgroup label="Expense">
-            {expenses.map((party) => (
-              <option key={party.id} value={party.id}>
-                {party.code} — {party.name}
-              </option>
-            ))}
-          </optgroup>
-        ) : null}
-        {others.length ? (
-          <optgroup label="All other parties">
-            {others.map((party) => (
-              <option key={party.id} value={party.id}>
-                {party.code} — {party.name}
-              </option>
-            ))}
-          </optgroup>
-        ) : null}
-        <option value="__new">+ Add new party</option>
-      </Select>
+          }}
+        >
+          + New party
+        </button>
+      </div>
       {adding ? (
         <div className="space-y-2 rounded border border-[var(--border)] bg-white p-2">
           <p className="text-xs font-medium">Nayi party</p>
@@ -392,14 +387,37 @@ function RegisterEntryColumn({
           {!groupId ? <p className="text-xs text-[var(--muted)]">Pehle company select karo.</p> : null}
         </div>
       ) : null}
-      <Select label="Or other ledger (optional)" name="ledgerId">
-        <option value="">If party has no ledger, pick here</option>
-        {ledgers.map((ledger) => (
-          <option key={ledger.id} value={ledger.id}>
-            {ledger.code} — {ledger.name}
-          </option>
-        ))}
-      </Select>
+      <div>
+        <p className="mb-1 text-sm font-medium">Or pick a ledger (optional)</p>
+        <div className="max-h-36 overflow-y-auto rounded-md border border-[var(--border)] bg-white">
+          <button
+            type="button"
+            className={`block w-full border-b border-[var(--border)] px-3 py-2 text-left text-sm ${
+              !selectedLedgerId ? "bg-[var(--surface-2)]" : "hover:bg-[var(--surface-2)]"
+            }`}
+            onClick={() => setSelectedLedgerId("")}
+          >
+            None — party use karo
+          </button>
+          {ledgers.map((ledger) => (
+            <button
+              key={ledger.id}
+              type="button"
+              className={`block w-full border-b border-[var(--border)] px-3 py-2 text-left text-sm last:border-b-0 ${
+                selectedLedgerId === ledger.id
+                  ? "bg-[var(--accent)] text-white"
+                  : "hover:bg-[var(--surface-2)]"
+              }`}
+              onClick={() => {
+                setSelectedLedgerId(ledger.id);
+                setSelectedPartyId("");
+              }}
+            >
+              {ledger.code} — {ledger.name}
+            </button>
+          ))}
+        </div>
+      </div>
       <Input label="Amount (₹)" name="amount" type="number" step="0.0001" min="0.0001" required />
       <Input label="Particulars" name="narration" placeholder="UPI / cash / bill no." />
       <Button type="submit" disabled={saveDisabled} className="w-full">
