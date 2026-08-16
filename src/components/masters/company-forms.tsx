@@ -5,6 +5,7 @@ import {
   createCompany,
   createCompanyGroup,
 } from "@/lib/actions/masters";
+import { BusyHeadSelect } from "@/components/masters/busy-head-select";
 import { Button, Input } from "@/components/ui/primitives";
 
 export function CompanyForms({
@@ -51,6 +52,8 @@ export function CompanyForms({
               gstin: String(fd.get("gstin") || "") || undefined,
               stateCode: String(fd.get("stateCode") || "") || undefined,
               pan: String(fd.get("pan") || "") || undefined,
+              cashHeadCode: String(fd.get("cashHeadCode") || "") || undefined,
+              bankHeadCode: String(fd.get("bankHeadCode") || "") || undefined,
             });
             if (!result.ok) setError(result.error);
           });
@@ -78,6 +81,27 @@ export function CompanyForms({
         <Input label="GSTIN" name="gstin" />
         <Input label="State code" name="stateCode" maxLength={2} />
         <Input label="PAN" name="pan" />
+        <BusyHeadSelect
+          label="Cash-in-hand under"
+          name="cashHeadCode"
+          required
+          useCodes
+          defaultValue="BS-CASH"
+          placeholder="Select cash head"
+        />
+        <BusyHeadSelect
+          label="Bank accounts under"
+          name="bankHeadCode"
+          required
+          useCodes
+          defaultValue="BS-BANK"
+          placeholder="Select bank head"
+        />
+        <p className="text-sm text-[var(--muted)]">
+          Common options: Cash-in-hand, Bank Accounts, Current Assets. Company
+          bante hi Busy heads seed honge aur cash ledger selected cash head pe
+          lagega.
+        </p>
         <Button type="submit" disabled={pending}>
           Create company
         </Button>

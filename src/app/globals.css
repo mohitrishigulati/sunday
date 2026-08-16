@@ -67,6 +67,7 @@ body {
 .cash-register-balances span { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.55rem 0.7rem; border: 1px solid #d7cda9; border-radius: 0.4rem; background: rgba(255, 255, 255, 0.68); color: #6d654d; font-size: 0.7rem; }
 .cash-register-balances strong { color: #282318; font-size: 0.82rem; }
 .cash-register-book { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); background: #fffef8; }
+.cash-register-book--single { grid-template-columns: minmax(0, 1fr); }
 .cash-register-page { min-width: 0; }
 .cash-register-page--receipt { border-right: 4px double #8e825d; }
 .cash-register-page--payment { box-shadow: inset 12px 0 18px -18px #3f3827; }

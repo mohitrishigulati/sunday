@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { createLedger } from "@/lib/actions/masters";
+import { BusyHeadSelect } from "@/components/masters/busy-head-select";
 import { Button, Input, Select } from "@/components/ui/primitives";
 
 type LedgerType =
@@ -91,16 +92,18 @@ export function LedgerForm({
       </Select>
       <Input label="Code" name="code" required />
       <Input label="Name" name="name" required />
-      <Select label="Account group" name="accountGroupId" disabled={!companyId}>
-        <option value="">
-          {companyId ? "— ungrouped —" : "Select a company first"}
-        </option>
-        {companyGroups.map((g) => (
-          <option key={g.id} value={g.id}>
-            {g.code} — {g.name} ({g.nature})
-          </option>
-        ))}
-      </Select>
+      <BusyHeadSelect
+        label="Account group"
+        name="accountGroupId"
+        disabled={!companyId}
+        heads={companyGroups.map((g) => ({
+          id: g.id,
+          code: g.code,
+          name: g.name,
+          nature: g.nature,
+        }))}
+        placeholder={companyId ? "Cash-in-hand / Bank Accounts / Current Assets" : "Select a company first"}
+      />
       <Select
         label="Counterpart company"
         name="counterpartCompanyId"

@@ -26,12 +26,14 @@ export function CashEntryForm({
   financialYears,
   ledgers,
   parties,
+  mode = "both",
 }: {
   companies: Company[];
   locations: Location[];
   financialYears: FinancialYear[];
   ledgers: Ledger[];
   parties: Party[];
+  mode?: "both" | "receipt" | "payment";
 }) {
   const [companyId, setCompanyId] = useState("");
   const [locationId, setLocationId] = useState("");
@@ -154,7 +156,8 @@ export function CashEntryForm({
             <p>Left side = cash aaya. Right side = cash gaya. Party ka naam select karo.</p>
           </div>
         </div>
-        <div className="cash-register-book">
+        <div className={`cash-register-book${mode === "both" ? "" : " cash-register-book--single"}`}>
+          {mode !== "payment" ? (
           <RegisterEntryColumn
             side="receipt"
             title="RECEIPTS / प्राप्तियाँ"
@@ -166,6 +169,8 @@ export function CashEntryForm({
             onPartyCreated={(party) => setPartiesList((current) => [party, ...current.filter((item) => item.id !== party.id)])}
             onSave={(formData) => save("receipt", formData)}
           />
+          ) : null}
+          {mode !== "receipt" ? (
           <RegisterEntryColumn
             side="payment"
             title="PAYMENTS / भुगतान"
@@ -177,6 +182,7 @@ export function CashEntryForm({
             onPartyCreated={(party) => setPartiesList((current) => [party, ...current.filter((item) => item.id !== party.id)])}
             onSave={(formData) => save("payment", formData)}
           />
+          ) : null}
         </div>
       </div>
       {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}

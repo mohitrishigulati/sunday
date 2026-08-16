@@ -1,4 +1,5 @@
 import { signOut } from "@/lib/actions/auth";
+import { Suspense } from "react";
 import { Button } from "@/components/ui/primitives";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { CommandPalette } from "@/components/layout/command-palette";
@@ -26,7 +27,9 @@ export function AppShell({
               Multi-company books
             </p>
           </div>
-          <SidebarNav roles={roles} permissions={permissions} />
+          <Suspense fallback={null}>
+            <SidebarNav roles={roles} permissions={permissions} />
+          </Suspense>
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--surface)]/80 px-4 py-3 backdrop-blur md:px-8">

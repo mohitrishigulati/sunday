@@ -1,11 +1,18 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button, DataTable, Input, Select } from "@/components/ui/primitives";
 import { formatMoney } from "@/lib/format";
 import { BankStatementPartySelector } from "@/components/reports/bank-statement-party-selector";
+import { DisplayReportNav } from "@/components/reports/display-report-nav";
 import { indianFinancialYearForDate } from "@/lib/financial-year";
 import { validateStatementBalances } from "@/lib/bank-statement-validation";
+import {
+  DISPLAY_REPORTS,
+  isDisplayReportKey,
+  type DisplayReportKey,
+} from "@/lib/display-reports";
 
 type Company = { id: string; group_id: string; code: string; name: string };
 type PartyOption = {
@@ -137,25 +144,9 @@ type BankStatementLine = {
   bank_statement_imports: { imported_at: string } | null;
 };
 
-const reportNames = {
-  bank_statement: "Bank Statement Ledger (uploaded)",
-  day: "Day Book",
-  trial: "Trial Balance",
-  ledger: "Accounting Ledger (posted)",
-  party: "Party Ledger (date-wise)",
-  trading: "Trading Account",
-  pnl: "Profit & Loss",
-  balance: "Balance Sheet",
-  sales: "Sales register",
-  purchase: "Purchase register",
-  expense: "Expense head-wise",
-  cashflow: "Cash Flow Statement",
-  fundflow: "Fund Flow / Working Capital",
-  outstanding: "Party Outstanding & Ageing",
-  gst: "GST / TDS / E-way Bill Register",
-  commission: "Salesman / Broker Commission",
-  salary: "Salary Register",
-} as const;
+const reportNames = Object.fromEntries(
+  DISPLAY_REPORTS.map((item) => [item.key, item.label]),
+) as Record<DisplayReportKey, string>;
 
 function decimalUnits(value: number | string): bigint {
   const text = String(value).trim();
@@ -378,11 +369,16 @@ export function ReportWorkbench({
   parties: PartyOption[];
   groupBankAccounts: GroupBankAccount[];
 }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [companyId, setCompanyId] = useState("");
   const [financialYearId, setFinancialYearId] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [report, setReport] = useState<keyof typeof reportNames>("trial");
+  const reportParam = searchParams.get("r");
+  const report: DisplayReportKey = isDisplayReportKey(reportParam)
+    ? reportParam
+    : "trial";
   const [ledgerId, setLedgerId] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
   const [partyId, setPartyId] = useState("");
@@ -484,6 +480,7 @@ export function ReportWorkbench({
               id: posting.ledger_id,
               code: posting.ledgers?.code ?? "",
               name: posting.ledgers?.name ?? "Unknown ledger",
+              ledgerType: posting.ledgers?.ledger_type ?? "general",
             },
           ]),
         ).values(),
@@ -742,16 +739,20 @@ export function ReportWorkbench({
           ])}
       />
     );
-  } else if (report === "ledger") {
-    const rows = scoped.filter(
-      (posting) => !ledgerId || posting.ledger_id === ledgerId,
+  } else if (report === "ledger" || report === "cash" || report === "bank") {
+    const wantedType =
+      report === "cash" ? "cash" : report === "bank" ? "bank" : null;
+    const typeRows = scoped.filter(
+      (posting) =>
+        (!wantedType || posting.ledgers?.ledger_type === wantedType) &&
+        (!ledgerId || posting.ledger_id === ledgerId),
     );
-    // Build the rows up-front and carry the balance on an object, as the day book
-    // does. A captured `let` accumulator can re-run past a memo boundary and
-    // compound the running balance on re-render.
+    const ledgerChoices = ledgers.filter(
+      (ledger) => !wantedType || ledger.ledgerType === wantedType,
+    );
     const acc = { balance: 0 };
     const ledgerRows: string[][] = [];
-    for (const posting of rows) {
+    for (const posting of typeRows) {
       acc.balance +=
         Number(posting.debit_amount) - Number(posting.credit_amount);
       ledgerRows.push([
@@ -769,12 +770,12 @@ export function ReportWorkbench({
     table = (
       <div className="space-y-3">
         <Select
-          label="Ledger"
+          label={report === "cash" ? "Cash ledger" : report === "bank" ? "Bank ledger" : "Account ledger"}
           value={ledgerId}
           onChange={(event) => setLedgerId(event.target.value)}
         >
-          <option value="">All ledgers</option>
-          {ledgers.map((ledger) => (
+          <option value="">All</option>
+          {ledgerChoices.map((ledger) => (
             <option key={ledger.id} value={ledger.id}>
               {ledger.code} — {ledger.name}
             </option>
@@ -1415,7 +1416,9 @@ export function ReportWorkbench({
           value={partyId}
           onChange={(event) => {
             setPartyId(event.target.value);
-            if (event.target.value) setReport("party");
+            if (event.target.value) {
+              router.replace("/reports?r=party");
+            }
           }}
         >
           <option value="">All parties</option>
@@ -1425,20 +1428,8 @@ export function ReportWorkbench({
             </option>
           ))}
         </Select>
-        <Select
-          label="Report"
-          value={report}
-          onChange={(event) =>
-            setReport(event.target.value as keyof typeof reportNames)
-          }
-        >
-          {Object.entries(reportNames).map(([key, name]) => (
-            <option key={key} value={key}>
-              {name}
-            </option>
-          ))}
-        </Select>
       </div>
+      <DisplayReportNav active={report} />
       {fromDate && toDate && fromDate > toDate ? (
         <p className="text-sm text-[var(--danger)]">
           To date cannot be earlier than From date.

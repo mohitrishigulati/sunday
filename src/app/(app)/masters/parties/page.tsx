@@ -6,19 +6,20 @@ import { createClient } from "@/lib/supabase/server";
 
 export default async function PartiesPage() {
   const supabase = await createClient();
-  const [{ data: groups }, { data: parties }, { data: companies }, { data: ledgers }, { data: links }] = await Promise.all([
+  const [{ data: groups }, { data: parties }, { data: companies }, { data: ledgers }, { data: links }, { data: accountGroups }] = await Promise.all([
     supabase.from("company_groups").select("id,code,name").order("code"),
     supabase.from("parties").select("id,code,name,party_kinds,gstin,credit_days,is_active,company_groups(code)").order("name"),
-    supabase.from("companies").select("id,code,name").eq("is_active", true).order("code"),
+    supabase.from("companies").select("id,group_id,code,name").eq("is_active", true).order("code"),
     supabase.from("ledgers").select("id,company_id,party_id,code,name").eq("is_active", true).eq("ledger_type", "party").order("code"),
     supabase.from("party_company_links").select("credit_limit,parties(code,name),companies(code,name),ledgers(code,name)"),
+    supabase.from("account_groups").select("id,company_id,code,name,nature").order("name"),
   ]);
 
   return (
     <div className="space-y-8">
       <PageHeader title="Party Master" description="Add every person or business from whom money is received or to whom money is paid. The same party can be linked with multiple group companies." />
       <div className="grid gap-6 xl:grid-cols-2">
-        <PartyForm groups={groups ?? []} />
+        <PartyForm groups={groups ?? []} companies={companies ?? []} accountGroups={accountGroups ?? []} />
         <PartyCompanyLinkForm companies={companies ?? []} parties={(parties ?? []).filter((party) => party.is_active)} ledgers={ledgers ?? []} />
       </div>
       <section className="space-y-3">

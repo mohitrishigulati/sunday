@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createBankAccount, createBankMaster, createCompany } from "@/lib/actions/masters";
+import { BusyHeadSelect } from "@/components/masters/busy-head-select";
 import { Button, Input, Select } from "@/components/ui/primitives";
 
 type Company = { id: string; code: string; name: string };
@@ -62,6 +63,8 @@ export function QuickCompanyBankAdd({
               gstin: String(formData.get("gstin") || "") || undefined,
               stateCode: String(formData.get("stateCode") || "") || undefined,
               pan: String(formData.get("pan") || "") || undefined,
+              cashHeadCode: String(formData.get("cashHeadCode") || "") || undefined,
+              bankHeadCode: String(formData.get("bankHeadCode") || "") || undefined,
             });
             if (!result.ok) { setError(result.error); return; }
             setMessage("Company created and selected. You can add its bank account now.");
@@ -80,6 +83,8 @@ export function QuickCompanyBankAdd({
           <Input label="GSTIN" name="gstin" />
           <Input label="State code" name="stateCode" maxLength={2} />
           <Input label="PAN" name="pan" maxLength={10} />
+          <BusyHeadSelect label="Cash-in-hand under" name="cashHeadCode" required useCodes defaultValue="BS-CASH" />
+          <BusyHeadSelect label="Bank accounts under" name="bankHeadCode" required useCodes defaultValue="BS-BANK" />
           <div className="self-end"><Button type="submit" disabled={pending || groups.length === 0}>Create and select company</Button></div>
           {groups.length === 0 ? <p className="text-sm text-[var(--danger)] md:col-span-3">Create a company group first.</p> : null}
         </form>

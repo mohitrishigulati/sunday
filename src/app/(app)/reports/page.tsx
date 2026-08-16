@@ -2,6 +2,7 @@ import { ReportWorkbench } from "@/components/reports/report-workbench";
 import { AccessDenied, PageHeader } from "@/components/ui/primitives";
 import { requireUser } from "@/lib/auth/guards";
 import { createClient } from "@/lib/supabase/server";
+import { Suspense } from "react";
 
 async function fetchAllLedgerPostings(supabase: Awaited<ReturnType<typeof createClient>>) {
   const rows: unknown[] = [];
@@ -84,7 +85,9 @@ export default async function ReportsPage() {
     supabase.from("bank_accounts").select("id,company_id,account_name,account_number,companies(group_id,code,name)").eq("is_active", true).is("deleted_at", null).order("account_name"),
   ]);
   return <div className="space-y-10">
-    <PageHeader title="Accounting & business reports" description="Company-wise and consolidated posted-data reports, statutory summaries, ageing, commission and payroll." />
+    <PageHeader title="Display" description="Busy jaisi reports: Day Book, Cash Ledger, Account Ledger, Trial Balance, Balance Sheet aur baaki saare options." />
+    <Suspense fallback={<p className="text-sm text-[var(--muted)]">Display load ho raha hai…</p>}>
     <ReportWorkbench companies={companies ?? []} financialYears={financialYears ?? []} postings={postings as never[]} closingStocks={closingStocks ?? []} documents={documents as never[]} documentLines={documentLines as never[]} salaries={salaries as never[]} bankStatementLines={bankStatementLines as never[]} parties={parties ?? []} groupBankAccounts={groupBankAccounts as never[]} />
+    </Suspense>
   </div>;
 }

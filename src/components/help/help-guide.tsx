@@ -15,9 +15,9 @@ const STEPS = [
   },
   {
     title: "3. Roz ki entry",
-    body: "Cash ke liye Cash Book, bank ke liye Bank Book. Journal tab use karo jab na cash ho na bank — sirf Debit / Credit.",
-    href: "/cash-book",
-    link: "Cash Book",
+    body: "Transactions menu se voucher type choose karo: Sale, Purchase, Receipt, Payment, Journal Entry. Cash Book / Bank Book registers ke liye hain.",
+    href: "/transactions",
+    link: "Transactions",
   },
   {
     title: "4. Bank statement upload karo",
@@ -28,8 +28,8 @@ const STEPS = [
   {
     title: "5. Party ledger dekho",
     body: "Reports → Party Ledger. Company choose karo, phir Party dropdown se naam. Debit = aapne pay kiya. Credit = aapko receive hua.",
-    href: "/reports",
-    link: "Reports",
+    href: "/reports?r=trial",
+    link: "Display — Trial Balance",
   },
 ];
 

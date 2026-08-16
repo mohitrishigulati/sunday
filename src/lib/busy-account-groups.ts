@@ -115,3 +115,14 @@ export async function insertBusyAccountGroups(
   }
   return { ok: true };
 }
+
+export const PRIMARY_LEDGER_HEAD_CODES = ["BS-CASH", "BS-BANK", "BS-CA"] as const;
+
+export function defaultPartyHeadCode(
+  kinds: string[] | undefined,
+): string {
+  if (kinds?.includes("customer")) return "BS-DEB";
+  if (kinds?.includes("supplier")) return "BS-CRED";
+  if (kinds?.includes("expense")) return "PL-IE";
+  return "BS-CA";
+}

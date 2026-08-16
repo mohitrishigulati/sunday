@@ -20,6 +20,8 @@ const companySchema = z.object({
   gstin: z.string().trim().max(15).optional(),
   stateCode: z.string().trim().length(2).optional(),
   pan: z.string().trim().max(10).optional(),
+  cashHeadCode: z.string().trim().min(1).optional(),
+  bankHeadCode: z.string().trim().min(1).optional(),
 });
 
 export async function createCompany(
@@ -76,6 +78,29 @@ export async function createCompany(
     await insertBusyAccountGroups(supabase, data.id);
   }
 
+  const cashHeadCode = parsed.data.cashHeadCode || "BS-CASH";
+  const bankHeadCode = parsed.data.bankHeadCode || "BS-BANK";
+  const { data: cashGroup } = await supabase
+    .from("account_groups")
+    .select("id")
+    .eq("company_id", data.id)
+    .eq("code", cashHeadCode)
+    .maybeSingle();
+  const { data: bankGroup } = await supabase
+    .from("account_groups")
+    .select("id")
+    .eq("company_id", data.id)
+    .eq("code", bankHeadCode)
+    .maybeSingle();
+  await supabase.from("ledgers").insert({
+    company_id: data.id,
+    account_group_id: cashGroup?.id ?? bankGroup?.id ?? null,
+    code: `CASH-${parsed.data.code.toUpperCase()}`,
+    name: "Cash-in-hand",
+    ledger_type: "cash",
+    is_intercompany: false,
+  });
+
   await ensureIndianFinancialYear(data.id, new Date().toISOString().slice(0, 10));
 
   revalidatePath("/masters/companies");
@@ -94,6 +119,7 @@ const locationSchema = z.object({
   locationType: z.enum(["branch", "warehouse", "cash_counter"]),
   isCashLocation: z.boolean().default(false),
   cashLedgerId: z.string().uuid().optional(),
+  cashAccountGroupId: z.string().uuid().optional(),
   parentLocationId: z.string().uuid().optional(),
 });
 
@@ -134,12 +160,19 @@ export async function createLocation(
   // A cash location must always be usable immediately. If the user does not
   // select an existing cash ledger, create a dedicated one for the location.
   if (isCashLocation && !cashLedgerId) {
-    const { data: cashGroup } = await supabase
-      .from("account_groups")
-      .select("id")
-      .eq("company_id", parsed.data.companyId)
-      .eq("code", "BS-CASH")
-      .maybeSingle();
+    const { data: cashGroup } = parsed.data.cashAccountGroupId
+      ? await supabase
+          .from("account_groups")
+          .select("id")
+          .eq("id", parsed.data.cashAccountGroupId)
+          .eq("company_id", parsed.data.companyId)
+          .maybeSingle()
+      : await supabase
+          .from("account_groups")
+          .select("id")
+          .eq("company_id", parsed.data.companyId)
+          .eq("code", "BS-CASH")
+          .maybeSingle();
     const { data: cashLedger, error: cashLedgerError } = await supabase
       .from("ledgers")
       .insert({
@@ -193,6 +226,7 @@ const bankAccountSchema = z.object({
   accountType: z.enum(["current", "savings", "od", "cc"]).optional(),
   ledgerCode: z.string().trim().min(1),
   ledgerName: z.string().trim().min(1),
+  accountGroupId: z.string().uuid().optional(),
 });
 
 const bankMasterSchema = z.object({
@@ -229,12 +263,19 @@ export async function createBankAccount(
 
   const supabase = await createClient();
 
-  const { data: bankGroup } = await supabase
-    .from("account_groups")
-    .select("id")
-    .eq("company_id", parsed.data.companyId)
-    .eq("code", "BS-BANK")
-    .maybeSingle();
+  const { data: bankGroup } = parsed.data.accountGroupId
+    ? await supabase
+        .from("account_groups")
+        .select("id")
+        .eq("id", parsed.data.accountGroupId)
+        .eq("company_id", parsed.data.companyId)
+        .maybeSingle()
+    : await supabase
+        .from("account_groups")
+        .select("id")
+        .eq("company_id", parsed.data.companyId)
+        .eq("code", "BS-BANK")
+        .maybeSingle();
 
   const { data: ledger, error: ledgerError } = await supabase
     .from("ledgers")
@@ -490,6 +531,8 @@ const partySchema = z.object({
   gstin: z.string().optional(),
   stateCode: z.string().length(2).optional(),
   creditDays: z.number().int().min(0).max(3650).default(0),
+  companyId: z.string().uuid().optional(),
+  accountGroupId: z.string().uuid().optional(),
 });
 
 export async function createParty(
@@ -521,7 +564,75 @@ export async function createParty(
 
   if (error || !data) return fail(error?.message ?? "Failed to create party");
 
+  if (parsed.data.companyId) {
+    const access = await assertCompanyAccess(parsed.data.companyId, "manage");
+    if (!access.ok) return access;
+
+    const { data: company } = await supabase
+      .from("companies")
+      .select("id, group_id")
+      .eq("id", parsed.data.companyId)
+      .maybeSingle();
+    if (!company || company.group_id !== parsed.data.groupId) {
+      return fail("Select a company from the same company group");
+    }
+
+    let accountGroupId = parsed.data.accountGroupId || null;
+    if (!accountGroupId) {
+      await insertBusyAccountGroups(supabase, parsed.data.companyId);
+      const preferred = parsed.data.partyKinds.includes("customer")
+        ? "BS-DEB"
+        : parsed.data.partyKinds.includes("supplier")
+          ? "BS-CRED"
+          : parsed.data.partyKinds.includes("expense")
+            ? "PL-IE"
+            : "BS-CA";
+      const { data: group } = await supabase
+        .from("account_groups")
+        .select("id")
+        .eq("company_id", parsed.data.companyId)
+        .eq("code", preferred)
+        .maybeSingle();
+      accountGroupId = group?.id ?? null;
+    } else {
+      const { data: group } = await supabase
+        .from("account_groups")
+        .select("id, company_id")
+        .eq("id", accountGroupId)
+        .maybeSingle();
+      if (!group || group.company_id !== parsed.data.companyId) {
+        return fail("Account head belongs to a different company");
+      }
+    }
+
+    const { data: ledger, error: ledgerError } = await supabase
+      .from("ledgers")
+      .insert({
+        company_id: parsed.data.companyId,
+        account_group_id: accountGroupId,
+        code: parsed.data.code.toUpperCase(),
+        name: parsed.data.name,
+        ledger_type: "party",
+        party_id: data.id,
+        is_intercompany: false,
+      })
+      .select("id")
+      .single();
+    if (ledgerError || !ledger) {
+      return fail(ledgerError?.message ?? "Party saved, but ledger could not be created");
+    }
+    await supabase.from("party_company_links").upsert(
+      {
+        party_id: data.id,
+        company_id: parsed.data.companyId,
+        ledger_id: ledger.id,
+      },
+      { onConflict: "party_id,company_id" },
+    );
+  }
+
   revalidatePath("/masters/parties");
+  revalidatePath("/masters/ledgers");
   return ok({ id: data.id });
 }
 

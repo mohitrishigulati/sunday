@@ -10,13 +10,14 @@ type FinancialYear = { id: string; company_id: string; code: string };
 type Ledger = { id: string; company_id: string; code: string; name: string; ledger_type: string };
 type BankAccount = { id: string; company_id: string; account_name: string; account_number: string; ledger_id: string };
 
-export function BankEntryForm({ companies, financialYears, ledgers, bankAccounts, groups, banks }: {
+export function BankEntryForm({ companies, financialYears, ledgers, bankAccounts, groups, banks, lockedKind }: {
   companies: Company[];
   financialYears: FinancialYear[];
   ledgers: Ledger[];
   bankAccounts: BankAccount[];
   groups: Array<{ id: string; code: string; name: string }>;
   banks: Array<{ id: string; code: string; name: string }>;
+  lockedKind?: "receipt" | "payment";
 }) {
   const [companyId, setCompanyId] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
@@ -38,7 +39,7 @@ export function BankEntryForm({ companies, financialYears, ledgers, bankAccounts
           financialYearId: String(formData.get("financialYearId")),
           bankAccountId: String(formData.get("bankAccountId")),
           voucherDate: String(formData.get("voucherDate")),
-          entryKind: String(formData.get("entryKind")) as "receipt" | "payment",
+          entryKind: (lockedKind ?? String(formData.get("entryKind"))) as "receipt" | "payment",
           counterpartyLedgerId: String(formData.get("counterpartyLedgerId")),
           amount: Number(formData.get("amount")),
           reference: String(formData.get("reference") || "") || undefined,
@@ -61,10 +62,14 @@ export function BankEntryForm({ companies, financialYears, ledgers, bankAccounts
         {years.map((year) => <option key={year.id} value={year.id}>{year.code}</option>)}
       </Select>
       <Input label="Date" name="voucherDate" type="date" required />
+      {lockedKind ? (
+        <input type="hidden" name="entryKind" value={lockedKind} />
+      ) : (
       <Select label="Entry" name="entryKind" required defaultValue="receipt">
         <option value="receipt">Received in bank</option>
         <option value="payment">Paid from bank</option>
       </Select>
+      )}
       <Select label="Particular / Ledger" name="counterpartyLedgerId" required disabled={!companyId}>
         <option value="">Select</option>
         {companyLedgers.map((ledger) => <option key={ledger.id} value={ledger.id}>{ledger.code} — {ledger.name}</option>)}
