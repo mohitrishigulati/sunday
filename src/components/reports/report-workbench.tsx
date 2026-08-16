@@ -7,7 +7,13 @@ import { BankStatementPartySelector } from "@/components/reports/bank-statement-
 import { validateStatementBalances } from "@/lib/bank-statement-validation";
 
 type Company = { id: string; group_id: string; code: string; name: string };
-type PartyOption = { id: string; group_id: string; code: string; name: string };
+type PartyOption = {
+  id: string;
+  group_id: string;
+  code: string;
+  name: string;
+  party_kinds?: string[];
+};
 type GroupBankAccount = {
   id: string;
   company_id: string;
@@ -166,6 +172,51 @@ function formatUnits(value: bigint): string {
 function balanceLabel(value: bigint): string {
   if (value === 0n) return formatUnits(value);
   return `${formatUnits(value < 0n ? -value : value)} ${value > 0n ? "Dr" : "Cr"}`;
+}
+
+type PartyMovement = {
+  partyId: string;
+  date: string;
+  companyId: string;
+  voucher: string;
+  type: string;
+  narration: string;
+  debit: bigint;
+  credit: bigint;
+};
+
+function partyMovementsFromStatementLines(
+  lines: BankStatementLine[],
+  companyId: string,
+  partyId: string,
+): PartyMovement[] {
+  return lines.flatMap((line) => {
+    if (!line.suggested_party_id) return [];
+    if (line.match_status === "ignored" || line.match_status === "matched")
+      return [];
+    if (companyId && line.bank_accounts?.company_id !== companyId) return [];
+    if (partyId && line.suggested_party_id !== partyId) return [];
+    const paid = Number(line.debit_amount) > 0;
+    const debit = paid ? decimalUnits(line.debit_amount) : 0n;
+    const credit = paid ? 0n : decimalUnits(line.credit_amount);
+    if (debit === 0n && credit === 0n) return [];
+    const bankName = line.bank_accounts?.account_name ?? "Bank";
+    const particulars = [line.description, line.reference]
+      .filter(Boolean)
+      .join(" / ");
+    return [
+      {
+        partyId: line.suggested_party_id,
+        date: line.txn_date,
+        companyId: line.bank_accounts?.company_id ?? "",
+        voucher: line.reference || `STMT-${line.statement_sequence}`,
+        type: "STMT",
+        narration: `${paid ? "Paid" : "Received"} · ${bankName}${particulars ? ` · ${particulars}` : ""}`,
+        debit,
+        credit,
+      },
+    ];
+  });
 }
 
 function reportTable() {
@@ -371,10 +422,37 @@ export function ReportWorkbench({
           code: salary.parties?.code ?? "",
           name: salary.parties?.name ?? "Unknown party",
         });
+    const selectedCompany = companies.find((company) => company.id === companyId);
+    for (const party of parties)
+      if (!companyId || party.group_id === selectedCompany?.group_id)
+        options.set(party.id, {
+          id: party.id,
+          code: party.code,
+          name: party.name,
+        });
+    for (const line of bankStatementLines) {
+      if (!line.suggested_party_id) continue;
+      if (companyId && line.bank_accounts?.company_id !== companyId) continue;
+      const party = parties.find((item) => item.id === line.suggested_party_id);
+      if (party)
+        options.set(party.id, {
+          id: party.id,
+          code: party.code,
+          name: party.name,
+        });
+    }
     return Array.from(options.values()).sort((a, b) =>
       a.name.localeCompare(b.name),
     );
-  }, [companyYearPostings, documents, salaries, companyId]);
+  }, [
+    companyYearPostings,
+    documents,
+    salaries,
+    companyId,
+    companies,
+    parties,
+    bankStatementLines,
+  ]);
   const scoped = useMemo(() => {
     const dated = companyYearPostings.filter(
       (posting) =>
@@ -708,40 +786,48 @@ export function ReportWorkbench({
       </div>
     );
   } else if (report === "party") {
-    const partyPostings = companyYearPostings.filter(
-      (posting) =>
-        posting.party_id &&
-        posting.ledgers?.ledger_type === "party" &&
-        (!partyId || posting.party_id === partyId),
+    const postedMovements: PartyMovement[] = companyYearPostings
+      .filter(
+        (posting) =>
+          posting.party_id &&
+          posting.ledgers?.ledger_type === "party" &&
+          (!partyId || posting.party_id === partyId),
+      )
+      .map((posting) => ({
+        partyId: posting.party_id!,
+        date: posting.voucher_date,
+        companyId: posting.company_id,
+        voucher: posting.voucher_number,
+        type: posting.vouchers?.voucher_types?.code ?? "—",
+        narration: posting.vouchers?.narration ?? "—",
+        debit: decimalUnits(posting.debit_amount),
+        credit: decimalUnits(posting.credit_amount),
+      }));
+    const statementMovements = partyMovementsFromStatementLines(
+      bankStatementLines,
+      companyId,
+      partyId,
     );
+    const partyMovements = [...postedMovements, ...statementMovements];
     if (partyId) {
       const selected = partyOptions.find((party) => party.id === partyId);
-      const opening = partyPostings
+      const opening = partyMovements
+        .filter((row) => Boolean(fromDate) && row.date < fromDate)
+        .reduce((sum, row) => sum + row.debit - row.credit, 0n);
+      const periodRows = partyMovements
         .filter(
-          (posting) => Boolean(fromDate) && posting.voucher_date < fromDate,
-        )
-        .reduce(
-          (sum, posting) =>
-            sum +
-            decimalUnits(posting.debit_amount) -
-            decimalUnits(posting.credit_amount),
-          0n,
-        );
-      const periodRows = partyPostings
-        .filter(
-          (posting) =>
-            (!fromDate || posting.voucher_date >= fromDate) &&
-            (!toDate || posting.voucher_date <= toDate),
+          (row) =>
+            (!fromDate || row.date >= fromDate) &&
+            (!toDate || row.date <= toDate),
         )
         .sort(
           (a, b) =>
-            a.voucher_date.localeCompare(b.voucher_date) ||
-            a.voucher_number.localeCompare(b.voucher_number),
+            a.date.localeCompare(b.date) || a.voucher.localeCompare(b.voucher),
         );
       const totals = periodRows.reduce(
-        (sum, posting) => ({
-          debit: sum.debit + decimalUnits(posting.debit_amount),
-          credit: sum.credit + decimalUnits(posting.credit_amount),
+        (sum, row) => ({
+          debit: sum.debit + row.debit,
+          credit: sum.credit + row.credit,
         }),
         { debit: 0n, credit: 0n },
       );
@@ -758,19 +844,17 @@ export function ReportWorkbench({
           balanceLabel(opening),
         ],
       ];
-      for (const posting of periodRows) {
-        const debit = decimalUnits(posting.debit_amount);
-        const credit = decimalUnits(posting.credit_amount);
-        accumulator.balance += debit - credit;
+      for (const row of periodRows) {
+        accumulator.balance += row.debit - row.credit;
         detailRows.push([
-          posting.voucher_date,
-          companies.find((company) => company.id === posting.company_id)
-            ?.code ?? "—",
-          posting.voucher_number,
-          posting.vouchers?.voucher_types?.code ?? "—",
-          posting.vouchers?.narration ?? "—",
-          debit === 0n ? "—" : formatUnits(debit),
-          credit === 0n ? "—" : formatUnits(credit),
+          row.date,
+          companies.find((company) => company.id === row.companyId)?.code ??
+            "—",
+          row.voucher,
+          row.type,
+          row.narration,
+          row.debit === 0n ? "—" : formatUnits(row.debit),
+          row.credit === 0n ? "—" : formatUnits(row.credit),
           balanceLabel(accumulator.balance),
         ]);
       }
@@ -780,6 +864,11 @@ export function ReportWorkbench({
             <p className="text-sm text-[var(--muted)]">Selected party</p>
             <p className="mt-1 text-lg font-semibold">
               {selected ? `${selected.code} — ${selected.name}` : "Party"}
+            </p>
+            <p className="mt-2 text-xs text-[var(--muted)]">
+              Includes posted party vouchers and bank-statement rows tagged in
+              Paid to / Received from. Debit = paid to party. Credit = received
+              from party.
             </p>
             <div className="mt-4 grid gap-3 sm:grid-cols-4">
               <div>
@@ -818,7 +907,7 @@ export function ReportWorkbench({
         </div>
       );
     } else {
-      const parties = new Map<
+      const partyRows = new Map<
         string,
         {
           code: string;
@@ -829,54 +918,58 @@ export function ReportWorkbench({
           credit: bigint;
         }
       >();
-      for (const posting of partyPostings) {
-        const row = parties.get(posting.party_id!) ?? {
-          code: posting.parties?.code ?? "",
-          name: posting.parties?.name ?? "Unknown party",
+      for (const row of partyMovements) {
+        const party = parties.find((item) => item.id === row.partyId);
+        const current = partyRows.get(row.partyId) ?? {
+          code: party?.code ?? "",
+          name: party?.name ?? "Unknown party",
           companies: new Set<string>(),
           opening: 0n,
           debit: 0n,
           credit: 0n,
         };
-        row.companies.add(
-          companies.find((company) => company.id === posting.company_id)
-            ?.code ?? "—",
+        current.companies.add(
+          companies.find((company) => company.id === row.companyId)?.code ??
+            "—",
         );
-        const movement =
-          decimalUnits(posting.debit_amount) -
-          decimalUnits(posting.credit_amount);
-        if (fromDate && posting.voucher_date < fromDate)
-          row.opening += movement;
+        const movement = row.debit - row.credit;
+        if (fromDate && row.date < fromDate) current.opening += movement;
         else if (
-          (!fromDate || posting.voucher_date >= fromDate) &&
-          (!toDate || posting.voucher_date <= toDate)
+          (!fromDate || row.date >= fromDate) &&
+          (!toDate || row.date <= toDate)
         ) {
-          row.debit += decimalUnits(posting.debit_amount);
-          row.credit += decimalUnits(posting.credit_amount);
+          current.debit += row.debit;
+          current.credit += row.credit;
         }
-        parties.set(posting.party_id!, row);
+        partyRows.set(row.partyId, current);
       }
       table = (
-        <DataTable
-          columns={[
-            "Party",
-            "Companies",
-            "Opening",
-            "Period debit",
-            "Period credit",
-            "Closing",
-          ]}
-          rows={Array.from(parties.values())
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((row) => [
-              `${row.code} — ${row.name}`,
-              Array.from(row.companies).sort().join(", "),
-              balanceLabel(row.opening),
-              formatUnits(row.debit),
-              formatUnits(row.credit),
-              balanceLabel(row.opening + row.debit - row.credit),
-            ])}
-        />
+        <div className="space-y-3">
+          <p className="text-xs text-[var(--muted)]">
+            Parties tagged on bank statements in Paid to / Received from appear
+            here. Open a party from the Party filter for date-wise ledger.
+          </p>
+          <DataTable
+            columns={[
+              "Party",
+              "Companies",
+              "Opening",
+              "Period debit",
+              "Period credit",
+              "Closing",
+            ]}
+            rows={Array.from(partyRows.values())
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((row) => [
+                `${row.code} — ${row.name}`,
+                Array.from(row.companies).sort().join(", "),
+                balanceLabel(row.opening),
+                formatUnits(row.debit),
+                formatUnits(row.credit),
+                balanceLabel(row.opening + row.debit - row.credit),
+              ])}
+          />
+        </div>
       );
     }
   } else if (report === "outstanding") {

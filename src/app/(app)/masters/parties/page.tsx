@@ -23,9 +23,9 @@ export default async function PartiesPage() {
       </div>
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">All parties</h2>
-        <DataTable columns={["Group", "Code", "Party name", "Transaction type", "GSTIN", "Credit days", "Active", "Edit"]} rows={(parties ?? []).map((party) => [
+        <DataTable columns={["Group", "Code", "Party name", "Account header", "GSTIN", "Credit days", "Active", "Edit"]} rows={(parties ?? []).map((party) => [
           (party.company_groups as unknown as { code: string } | null)?.code ?? "—", party.code, party.name,
-          (party.party_kinds ?? []).map((kind: string) => kind === "customer" ? "Money received" : kind === "supplier" ? "Money paid" : kind).join(", ") || "—",
+          (party.party_kinds ?? []).map((kind: string) => kind === "customer" ? "Debtor" : kind === "supplier" ? "Creditor" : kind === "expense" ? "Expense" : kind).join(", ") || "—",
           party.gstin ?? "—", party.credit_days, party.is_active ? "Yes" : "No",
           <MasterRowActions key={party.id} entity="parties" id={party.id} initialCode={party.code} initialName={party.name} active={party.is_active} />,
         ])} />

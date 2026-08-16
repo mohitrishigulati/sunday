@@ -80,7 +80,7 @@ export default async function ReportsPage() {
     fetchAllCommissionLines(supabase),
     fetchAllSalaries(supabase),
     fetchAllBankStatementLines(supabase),
-    supabase.from("parties").select("id,group_id,code,name").eq("is_active", true).is("deleted_at", null).order("name"),
+    supabase.from("parties").select("id,group_id,code,name,party_kinds").eq("is_active", true).is("deleted_at", null).order("name"),
     supabase.from("bank_accounts").select("id,company_id,account_name,account_number,companies(group_id,code,name)").eq("is_active", true).is("deleted_at", null).order("account_name"),
   ]);
   return <div className="space-y-10">

@@ -400,7 +400,7 @@ const partySchema = z.object({
   groupId: z.string().uuid(),
   code: z.string().trim().min(1),
   name: z.string().trim().min(1),
-  partyKinds: z.array(z.enum(["customer", "supplier", "employee", "broker", "agent"])).min(1, "Select at least one transaction type"),
+  partyKinds: z.array(z.enum(["customer", "supplier", "expense", "employee", "broker", "agent"])).min(1, "Select at least one account header"),
   gstin: z.string().optional(),
   stateCode: z.string().length(2).optional(),
   creditDays: z.number().int().min(0).max(3650).default(0),
