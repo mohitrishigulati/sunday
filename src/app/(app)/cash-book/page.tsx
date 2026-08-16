@@ -17,18 +17,20 @@ export default async function CashBookPage() {
     { data: locations },
     { data: financialYears },
     { data: ledgers },
+    { data: parties },
     { data: vouchers },
     { data: postings },
     { data: verifications },
   ] = await Promise.all([
-    supabase.from("companies").select("id, code, name").order("code"),
+    supabase.from("companies").select("id, group_id, code, name").order("code"),
     supabase.from("locations").select("id, company_id, code, name, cash_ledger_id").eq("is_cash_location", true).not("cash_ledger_id", "is", null).order("code"),
-    supabase.from("financial_years").select("id, company_id, code").order("start_date", { ascending: false }),
-    supabase.from("ledgers").select("id, company_id, code, name, ledger_type").is("deleted_at", null).eq("is_active", true).order("code"),
+    supabase.from("financial_years").select("id, company_id, code, start_date, end_date").order("start_date", { ascending: false }),
+    supabase.from("ledgers").select("id, company_id, party_id, code, name, ledger_type").is("deleted_at", null).eq("is_active", true).order("code"),
+    supabase.from("parties").select("id, group_id, code, name, party_kinds").eq("is_active", true).is("deleted_at", null).order("name"),
     supabase.from("vouchers").select("id, created_by, draft_ref, voucher_number, status, voucher_date, narration, companies(code), voucher_types(code)").order("created_at", { ascending: false }).limit(100),
     supabase
       .from("ledger_postings")
-      .select("id, voucher_id, voucher_date, voucher_number, posted_at, location_id, ledger_id, debit_amount, credit_amount, companies(code), locations(code, name, cash_ledger_id), vouchers(narration, voucher_types(code))")
+      .select("id, voucher_id, voucher_date, voucher_number, posted_at, location_id, ledger_id, debit_amount, credit_amount, companies(code), locations(code, name, cash_ledger_id), vouchers(narration, party_id, voucher_types(code), parties(code, name))")
       .order("voucher_date", { ascending: true })
       .order("posted_at", { ascending: true })
       .limit(2000),
@@ -49,6 +51,7 @@ export default async function CashBookPage() {
     const voucher = posting.vouchers as unknown as {
       narration: string | null;
       voucher_types: { code: string } | null;
+      parties: { code: string; name: string } | null;
     } | null;
     if (
       !location ||
@@ -65,28 +68,34 @@ export default async function CashBookPage() {
     companyCode: companyCodeById.get(location.company_id) ?? "—",
     locationCode: location.code,
     locationName: location.name,
-    entries: cashRows.filter((row) => row.posting.location_id === location.id).map(({ posting, voucher }) => ({
+    entries: cashRows.filter((row) => row.posting.location_id === location.id).map(({ posting, voucher }) => {
+      const party = voucher?.parties;
+      const paid = Number(posting.credit_amount) > 0;
+      const partyLabel = party ? `${paid ? "Paid to" : "Received from"} ${party.code} — ${party.name}` : voucher?.narration ?? null;
+      return {
       id: posting.id,
       voucherDate: posting.voucher_date,
       voucherNumber: posting.voucher_number,
       voucherType: voucher?.voucher_types?.code ?? null,
-      narration: voucher?.narration ?? null,
+      narration: partyLabel ?? voucher?.narration ?? null,
       debitAmount: posting.debit_amount,
       creditAmount: posting.credit_amount,
-    })),
+    };
+    }),
   }));
 
   return (
     <div className="space-y-8">
       <PageHeader
         title="Cash Book"
-        description="Location-wise cash receipts and payments with a running balance. Entries remain drafts until an authorised approver approves and posts them."
+        description="Register jaisa: left Received from, right Paid to. Entry draft rehti hai jab tak approve/post na ho."
       />
       <CashEntryForm
         companies={companies ?? []}
         locations={locations ?? []}
         financialYears={financialYears ?? []}
         ledgers={ledgers ?? []}
+        parties={parties ?? []}
       />
       <div><h2 className="mb-3 text-lg font-semibold">Cash transfer between locations</h2><CashTransferForm companies={companies ?? []} locations={(locations ?? []).map((location)=>({id:location.id,company_id:location.company_id,code:location.code,name:location.name}))} years={financialYears ?? []} ledgers={ledgers ?? []}/></div>
       <div>

@@ -82,7 +82,7 @@ function RegisterPage({ side, title, rows, rowCount, total }: { side: "receipt" 
   return <div className={`cash-register-page cash-register-page--${side}`}>
     <div className="cash-register-page-title">{title}</div>
     <table>
-      <thead><tr><th className="cash-col-date">Date</th><th>Particulars</th><th className="cash-col-voucher">Voucher / Unique No.</th><th className="cash-col-amount">Amount (₹)</th><th className="cash-col-balance">Balance (₹)</th></tr></thead>
+      <thead><tr><th className="cash-col-date">Date</th><th>{side === "receipt" ? "Received from" : "Paid to"}</th><th className="cash-col-voucher">Voucher / Unique No.</th><th className="cash-col-amount">Amount (₹)</th><th className="cash-col-balance">Balance (₹)</th></tr></thead>
       <tbody>{Array.from({ length: rowCount }, (_, index) => {
         const row = rows[index];
         if (!row) return <tr key={`empty-${index}`} aria-hidden="true"><td>&nbsp;</td><td /><td /><td /><td /></tr>;

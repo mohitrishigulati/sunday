@@ -12,10 +12,12 @@ const cashEntrySchema = z.object({
   financialYearId: z.string().uuid(),
   voucherDate: z.string(),
   entryKind: z.enum(["receipt", "payment"]),
-  counterpartyLedgerId: z.string().uuid(),
+  counterpartyLedgerId: z.string().uuid().optional(),
   partyId: z.string().uuid().optional(),
   amount: z.number().positive(),
   narration: z.string().min(1),
+}).refine((value) => Boolean(value.partyId || value.counterpartyLedgerId), {
+  message: "Select Received from / Paid to party, or a ledger",
 });
 
 export async function createCashBookEntry(
@@ -55,16 +57,41 @@ export async function createCashBookEntry(
   }
   if (typeError || !voucherType) return fail("Cash voucher type is not configured for this company");
 
+  let counterpartyLedgerId = data.counterpartyLedgerId;
+  let partyId = data.partyId ?? null;
+  if (data.partyId) {
+    const { data: link } = await supabase
+      .from("party_company_links")
+      .select("ledger_id")
+      .eq("party_id", data.partyId)
+      .eq("company_id", data.companyId)
+      .maybeSingle();
+    const { data: partyLedgers } = await supabase
+      .from("ledgers")
+      .select("id")
+      .eq("company_id", data.companyId)
+      .eq("party_id", data.partyId)
+      .eq("is_active", true)
+      .is("deleted_at", null)
+      .limit(1);
+    counterpartyLedgerId = link?.ledger_id ?? partyLedgers?.[0]?.id ?? counterpartyLedgerId;
+    if (!counterpartyLedgerId) {
+      return fail("Is party ka ledger is company mein nahi hai. Party Master mein company link / ledger banao, ya Other ledger select karo.");
+    }
+  }
+  if (!counterpartyLedgerId) return fail("Select Received from / Paid to");
+
   const { data: counterparty, error: counterpartyError } = await supabase
     .from("ledgers")
     .select("id,party_id")
-    .eq("id", data.counterpartyLedgerId)
+    .eq("id", counterpartyLedgerId)
     .eq("company_id", data.companyId)
     .is("deleted_at", null)
     .maybeSingle();
   if (counterpartyError || !counterparty || counterparty.id === location.cash_ledger_id) {
     return fail("Select an active non-cash counterparty ledger from the same company");
   }
+  partyId = partyId ?? counterparty.party_id ?? null;
 
   const { data: voucher, error: voucherError } = await supabase
     .from("vouchers")
@@ -76,7 +103,7 @@ export async function createCashBookEntry(
       voucher_date: data.voucherDate,
       draft_ref: `DRAFT-${crypto.randomUUID().slice(0, 8)}`,
       narration: data.narration,
-      party_id: data.partyId ?? counterparty.party_id ?? null,
+      party_id: partyId,
       created_by: auth.data.userId,
     })
     .select("id")
@@ -102,8 +129,8 @@ export async function createCashBookEntry(
       company_id: data.companyId,
       location_id: data.locationId,
       financial_year_id: data.financialYearId,
-      ledger_id: data.counterpartyLedgerId,
-      party_id: data.partyId ?? counterparty.party_id ?? null,
+      ledger_id: counterpartyLedgerId,
+      party_id: partyId,
       debit_amount: cashIsDebit ? 0 : data.amount,
       credit_amount: cashIsDebit ? data.amount : 0,
       narration: data.narration,
