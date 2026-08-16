@@ -710,8 +710,16 @@ export async function ensureIndianFinancialYear(
     .eq("company_id", companyId)
     .eq("code", fy.code)
     .maybeSingle();
-  if (existing)
+  if (existing) {
+    // A financial year with no accounting periods blocks every voucher for that
+    // year: trg_vouchers_period_insert calls assert_period_open, which raises
+    // "No accounting period covers date ...". Years created before periods were
+    // seeded — or whose create_monthly_periods call failed — must be repaired
+    // here, not just on the create path.
+    const periods = await ensureMonthlyPeriods(supabase, existing.id);
+    if (!periods.ok) return periods;
     return ok({ id: existing.id, created: false, code: existing.code });
+  }
 
   const { data, error } = await supabase
     .from("financial_years")
@@ -734,12 +742,41 @@ export async function ensureIndianFinancialYear(
   }
   if (error || !data) return fail(error?.message ?? "Could not create financial year");
 
-  await supabase.rpc("create_monthly_periods", {
-    p_financial_year_id: data.id,
-  });
+  const periods = await ensureMonthlyPeriods(supabase, data.id);
+  if (!periods.ok) return periods;
+
   revalidatePath("/masters/financial-years");
   revalidatePath("/reports");
   return ok({ id: data.id, created: true, code: fy.code });
+}
+
+/**
+ * create_monthly_periods requires the `manage` capability, while creating a
+ * financial year only needs `write`. Discarding its result left the year with no
+ * periods and no error anywhere — and every voucher dated in that year then
+ * failed at insert. Report the failure instead of swallowing it.
+ */
+async function ensureMonthlyPeriods(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  financialYearId: string,
+): Promise<ActionResult<true>> {
+  const { count } = await supabase
+    .from("accounting_periods")
+    .select("id", { count: "exact", head: true })
+    .eq("financial_year_id", financialYearId);
+
+  if ((count ?? 0) > 0) return ok(true);
+
+  const { error } = await supabase.rpc("create_monthly_periods", {
+    p_financial_year_id: financialYearId,
+  });
+
+  if (error) {
+    return fail(
+      `Financial year has no accounting periods and they could not be created (${error.message}). An admin must open the year before entries can be saved.`,
+    );
+  }
+  return ok(true);
 }
 
 export async function ensureIndianFinancialYearsForRange(
@@ -807,9 +844,8 @@ export async function createFinancialYear(
 
   if (error || !data) return fail(error?.message ?? "Failed to create financial year");
 
-  await supabase.rpc("create_monthly_periods", {
-    p_financial_year_id: data.id,
-  });
+  const periods = await ensureMonthlyPeriods(supabase, data.id);
+  if (!periods.ok) return periods;
 
   revalidatePath("/masters/financial-years");
   return ok({ id: data.id });

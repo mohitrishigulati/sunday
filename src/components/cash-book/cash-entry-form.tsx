@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createCashBookEntry, createCashRegisterLocation, createFourSampleCashEntries, ensureCashBookSetup } from "@/lib/actions/cash-book";
+import { createCashBookEntry, createCashRegisterLocation, createFourSampleCashEntries, ensureCashBookSetup, seedThreeCashBooksWithTwentyEntries } from "@/lib/actions/cash-book";
 import { createParty } from "@/lib/actions/masters";
 import { indianFinancialYearForDate } from "@/lib/financial-year";
 import { Button, Input, Select } from "@/components/ui/primitives";
@@ -216,6 +216,32 @@ export function CashEntryForm({
         }
       >
         Create cash register & year for this company
+      </Button>
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={pending || !companyId}
+        onClick={() =>
+          startTransition(async () => {
+            if (!companyId) return;
+            setError(null);
+            setSuccess(null);
+            const result = await seedThreeCashBooksWithTwentyEntries({
+              companyId,
+              voucherDate,
+            });
+            if (!result.ok) {
+              setError(result.error);
+              return;
+            }
+            setSuccess(
+              `Cash Book 1 / 2 / 3 ready. ${result.data.receipts} receipts and ${result.data.payments} payments saved as drafts.`,
+            );
+            router.refresh();
+          })
+        }
+      >
+        Create Cash Book 1–3 + 20 entries
       </Button>
       {setupHint ? <p className="text-sm text-[var(--accent)]">{setupHint}</p> : null}
       {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}

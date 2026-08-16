@@ -72,7 +72,9 @@ export async function importBankStatement(input: z.infer<typeof importSchema>): 
   if (lineError) { await supabase.from("bank_statement_imports").delete().eq("id", statement.id); if (attachmentId) await supabase.from("attachments").delete().eq("id", attachmentId); return fail(lineError.message); }
   const { count: duplicatesQueued } = await supabase.from("bank_duplicate_exceptions").select("id", { count: "exact", head: true }).eq("import_id", statement.id);
   await supabase.rpc("suggest_bank_statement_parties", { p_import_id: statement.id });
-  revalidatePath("/bank-import"); revalidatePath("/dashboard"); return ok({ id: statement.id, imported: lineRows.length, duplicatesQueued: duplicatesQueued ?? 0, balanceMismatch: mismatch });
+  revalidatePath("/bank-import"); revalidatePath("/dashboard"); // Queued rows are stored but not usable as transactions, so they are not
+  // "imported" from the operator's point of view.
+  return ok({ id: statement.id, imported: lineRows.length - (duplicatesQueued ?? 0), duplicatesQueued: duplicatesQueued ?? 0, balanceMismatch: mismatch });
 }
 
 export async function setBankLineMatch(lineId: string, voucherId?: string, ignore = false): Promise<ActionResult<{ id: string }>> {

@@ -29,19 +29,22 @@ CREATE OR REPLACE FUNCTION public.bank_line_fingerprint(
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
-SET search_path = public
+SET search_path = public, extensions
 AS $$
   SELECT encode(
     digest(
-      concat_ws('|',
-        p_bank_account_id::text,
-        upper(regexp_replace(coalesce(p_reference, ''), '\s', '', 'g')),
-        to_char(p_txn_date, 'YYYY-MM-DD'),
-        to_char(
-          round(GREATEST(coalesce(p_debit_amount, 0), coalesce(p_credit_amount, 0)), 4),
-          'FM9999999999999990.0000'
+      convert_to(
+        concat_ws('|',
+          p_bank_account_id::text,
+          upper(regexp_replace(coalesce(p_reference, ''), '\s', '', 'g')),
+          to_char(p_txn_date, 'YYYY-MM-DD'),
+          to_char(
+            round(GREATEST(coalesce(p_debit_amount, 0), coalesce(p_credit_amount, 0)), 4),
+            'FM9999999999999990.0000'
+          ),
+          CASE WHEN coalesce(p_debit_amount, 0) > 0 THEN 'DR' ELSE 'CR' END
         ),
-        CASE WHEN coalesce(p_debit_amount, 0) > 0 THEN 'DR' ELSE 'CR' END
+        'UTF8'
       ),
       'sha256'
     ),
@@ -262,10 +265,10 @@ DECLARE
   v_narration text := NULLIF(p_payload ->> 'narration', '');
   v_from_fy uuid := (p_payload ->> 'from_financial_year_id')::uuid;
   v_to_fy uuid := (p_payload ->> 'to_financial_year_id')::uuid;
-  v_from_credit_ledger uuid := (p_payload ->> 'from_credit_ledger_id')::uuid;
-  v_from_debit_ledger uuid := (p_payload ->> 'from_debit_ledger_id')::uuid;
-  v_to_debit_ledger uuid := (p_payload ->> 'to_debit_ledger_id')::uuid;
-  v_to_credit_ledger uuid := (p_payload ->> 'to_credit_ledger_id')::uuid;
+  v_from_asset_ledger uuid := (p_payload ->> 'from_asset_ledger_id')::uuid;
+  v_from_ic_ledger uuid := (p_payload ->> 'from_intercompany_ledger_id')::uuid;
+  v_to_asset_ledger uuid := (p_payload ->> 'to_asset_ledger_id')::uuid;
+  v_to_ic_ledger uuid := (p_payload ->> 'to_intercompany_ledger_id')::uuid;
   v_group_id uuid;
   v_transfer public.intercompany_transfers%ROWTYPE;
   v_from_voucher uuid;
@@ -302,6 +305,48 @@ BEGIN
     RAISE EXCEPTION 'Both companies must belong to the same group';
   END IF;
 
+  IF NOT EXISTS (
+    SELECT 1 FROM public.financial_years
+    WHERE id = v_from_fy AND company_id = v_from_company_id
+      AND v_transfer_date BETWEEN start_date AND end_date
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.financial_years
+    WHERE id = v_to_fy AND company_id = v_to_company_id
+      AND v_transfer_date BETWEEN start_date AND end_date
+  ) THEN
+    RAISE EXCEPTION 'Financial years do not match the companies and transfer date';
+  END IF;
+
+  -- Money leaves a real cash/bank ledger on one side and arrives in one on the
+  -- other; the control accounts must be a reciprocal receivable/payable pair
+  -- pointing at each other's company, or the group consolidation will not
+  -- eliminate cleanly.
+  IF NOT EXISTS (
+    SELECT 1 FROM public.ledgers
+    WHERE id = v_from_asset_ledger AND company_id = v_from_company_id
+      AND ledger_type IN ('cash', 'bank')
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.ledgers
+    WHERE id = v_to_asset_ledger AND company_id = v_to_company_id
+      AND ledger_type IN ('cash', 'bank')
+  ) THEN
+    RAISE EXCEPTION 'Asset ledgers must be cash or bank ledgers of their own company';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.ledgers
+    WHERE id = v_from_ic_ledger AND company_id = v_from_company_id
+      AND ledger_type = 'intercompany_receivable'
+      AND counterpart_company_id = v_to_company_id
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.ledgers
+    WHERE id = v_to_ic_ledger AND company_id = v_to_company_id
+      AND ledger_type = 'intercompany_payable'
+      AND counterpart_company_id = v_from_company_id
+  ) THEN
+    RAISE EXCEPTION 'Select reciprocal inter-company receivable/payable ledgers';
+  END IF;
+
   INSERT INTO public.intercompany_transfers (
     group_id, from_company_id, to_company_id, amount, transfer_date, utr_reference
   ) VALUES (
@@ -309,59 +354,59 @@ BEGIN
   )
   RETURNING * INTO v_transfer;
 
-  -- Paying company: credit the funding ledger, debit the IC receivable.
+  -- Paying company: debit the IC receivable, credit the cash/bank that funds it.
   SELECT id INTO v_type_id FROM public.voucher_types
-  WHERE company_id = v_from_company_id AND code = 'JV';
+  WHERE company_id = v_from_company_id AND code = 'ICT';
   IF v_type_id IS NULL THEN
-    RAISE EXCEPTION 'Journal voucher type is not seeded for the paying company';
+    RAISE EXCEPTION 'ICT voucher type is not seeded for the paying company';
   END IF;
 
   INSERT INTO public.vouchers (
     company_id, financial_year_id, voucher_type_id, voucher_date, draft_ref,
-    status, narration, created_by, intercompany_transfer_id
+    status, narration, external_ref, created_by, intercompany_transfer_id
   ) VALUES (
     v_from_company_id, v_from_fy, v_type_id, v_transfer_date,
     'DRAFT-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8),
-    'draft', COALESCE(v_narration, 'Inter-company transfer'), auth.uid(),
+    'draft', COALESCE(v_narration, 'Inter-company transfer'), v_utr, auth.uid(),
     v_transfer.id
   )
   RETURNING id INTO v_from_voucher;
 
   INSERT INTO public.voucher_lines (
     voucher_id, line_no, company_id, financial_year_id, ledger_id,
-    debit_amount, credit_amount, narration
+    debit_amount, credit_amount, narration, intercompany_transfer_id
   ) VALUES
-    (v_from_voucher, 1, v_from_company_id, v_from_fy, v_from_debit_ledger,
-     v_amount, 0, COALESCE(v_utr, 'Inter-company transfer')),
-    (v_from_voucher, 2, v_from_company_id, v_from_fy, v_from_credit_ledger,
-     0, v_amount, COALESCE(v_utr, 'Inter-company transfer'));
+    (v_from_voucher, 1, v_from_company_id, v_from_fy, v_from_ic_ledger,
+     v_amount, 0, COALESCE(v_utr, 'Inter-company transfer'), v_transfer.id),
+    (v_from_voucher, 2, v_from_company_id, v_from_fy, v_from_asset_ledger,
+     0, v_amount, COALESCE(v_utr, 'Inter-company transfer'), v_transfer.id);
 
-  -- Receiving company: debit the receiving ledger, credit the IC payable.
+  -- Receiving company: debit the cash/bank that receives it, credit IC payable.
   SELECT id INTO v_type_id FROM public.voucher_types
-  WHERE company_id = v_to_company_id AND code = 'JV';
+  WHERE company_id = v_to_company_id AND code = 'ICT';
   IF v_type_id IS NULL THEN
-    RAISE EXCEPTION 'Journal voucher type is not seeded for the receiving company';
+    RAISE EXCEPTION 'ICT voucher type is not seeded for the receiving company';
   END IF;
 
   INSERT INTO public.vouchers (
     company_id, financial_year_id, voucher_type_id, voucher_date, draft_ref,
-    status, narration, created_by, intercompany_transfer_id
+    status, narration, external_ref, created_by, intercompany_transfer_id
   ) VALUES (
     v_to_company_id, v_to_fy, v_type_id, v_transfer_date,
     'DRAFT-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8),
-    'draft', COALESCE(v_narration, 'Inter-company transfer'), auth.uid(),
+    'draft', COALESCE(v_narration, 'Inter-company transfer'), v_utr, auth.uid(),
     v_transfer.id
   )
   RETURNING id INTO v_to_voucher;
 
   INSERT INTO public.voucher_lines (
     voucher_id, line_no, company_id, financial_year_id, ledger_id,
-    debit_amount, credit_amount, narration
+    debit_amount, credit_amount, narration, intercompany_transfer_id
   ) VALUES
-    (v_to_voucher, 1, v_to_company_id, v_to_fy, v_to_debit_ledger,
-     v_amount, 0, COALESCE(v_utr, 'Inter-company transfer')),
-    (v_to_voucher, 2, v_to_company_id, v_to_fy, v_to_credit_ledger,
-     0, v_amount, COALESCE(v_utr, 'Inter-company transfer'));
+    (v_to_voucher, 1, v_to_company_id, v_to_fy, v_to_asset_ledger,
+     v_amount, 0, COALESCE(v_utr, 'Inter-company transfer'), v_transfer.id),
+    (v_to_voucher, 2, v_to_company_id, v_to_fy, v_to_ic_ledger,
+     0, v_amount, COALESCE(v_utr, 'Inter-company transfer'), v_transfer.id);
 
   UPDATE public.intercompany_transfers
   SET from_voucher_id = v_from_voucher, to_voucher_id = v_to_voucher
@@ -378,8 +423,14 @@ GRANT EXECUTE ON FUNCTION public.create_intercompany_transfer(jsonb) TO authenti
 -- ---------------------------------------------------------------------------
 -- 5. Atomic location cash transfer
 -- ---------------------------------------------------------------------------
+-- A location transfer is two vouchers, not one: the sending location books a
+-- cash payment and the receiving location a cash receipt, bridged by a non-cash
+-- clearing ledger and tied together by cash_transfer_group_id. That is what
+-- keeps each location's cash book a self-contained register, the way Tally and
+-- Busy present it. Both vouchers and all four lines now commit or roll back
+-- together.
 CREATE OR REPLACE FUNCTION public.create_location_cash_transfer(p_payload jsonb)
-RETURNS public.vouchers
+RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
@@ -390,13 +441,17 @@ DECLARE
   v_financial_year_id uuid := (p_payload ->> 'financial_year_id')::uuid;
   v_from_location_id uuid := (p_payload ->> 'from_location_id')::uuid;
   v_to_location_id uuid := (p_payload ->> 'to_location_id')::uuid;
+  v_clearing_ledger_id uuid := (p_payload ->> 'clearing_ledger_id')::uuid;
   v_amount numeric(18,4) := round((p_payload ->> 'amount')::numeric, 4);
   v_transfer_date date := (p_payload ->> 'transfer_date')::date;
-  v_narration text := NULLIF(p_payload ->> 'narration', '');
+  v_narration text := NULLIF(btrim(p_payload ->> 'narration'), '');
   v_from_ledger uuid;
   v_to_ledger uuid;
-  v_type_id uuid;
-  v_voucher public.vouchers%ROWTYPE;
+  v_payment_type uuid;
+  v_receipt_type uuid;
+  v_group_id uuid := gen_random_uuid();
+  v_from_voucher uuid;
+  v_to_voucher uuid;
 BEGIN
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Authentication required';
@@ -405,7 +460,10 @@ BEGIN
     RAISE EXCEPTION 'Transfer amount must be greater than zero';
   END IF;
   IF v_from_location_id = v_to_location_id THEN
-    RAISE EXCEPTION 'A cash transfer needs two different locations';
+    RAISE EXCEPTION 'Source and destination locations must differ';
+  END IF;
+  IF v_narration IS NULL THEN
+    RAISE EXCEPTION 'Narration is required for a cash transfer';
   END IF;
 
   PERFORM public.assert_company_capability(v_company_id, 'write');
@@ -413,52 +471,87 @@ BEGIN
   PERFORM public.assert_cashier_location_write(v_from_location_id);
   PERFORM public.assert_cashier_location_write(v_to_location_id);
 
-  IF NOT public.has_permission('cash.write')
+  IF NOT public.has_permission('vouchers.draft')
      AND NOT public.user_has_role(ARRAY['admin']) THEN
-    RAISE EXCEPTION 'Missing cash.write permission';
+    RAISE EXCEPTION 'Missing vouchers.draft permission';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.financial_years
+    WHERE id = v_financial_year_id AND company_id = v_company_id
+      AND v_transfer_date BETWEEN start_date AND end_date
+  ) THEN
+    RAISE EXCEPTION 'Transfer date is outside the selected financial year';
   END IF;
 
   -- Each location books to its own cash ledger, linked in …015.
   SELECT cash_ledger_id INTO v_from_ledger FROM public.locations
-  WHERE id = v_from_location_id AND company_id = v_company_id;
+  WHERE id = v_from_location_id AND company_id = v_company_id
+    AND is_cash_location AND cash_ledger_id IS NOT NULL;
   SELECT cash_ledger_id INTO v_to_ledger FROM public.locations
-  WHERE id = v_to_location_id AND company_id = v_company_id;
-
+  WHERE id = v_to_location_id AND company_id = v_company_id
+    AND is_cash_location AND cash_ledger_id IS NOT NULL;
   IF v_from_ledger IS NULL OR v_to_ledger IS NULL THEN
-    RAISE EXCEPTION 'Both locations must belong to this company and have a cash ledger';
+    RAISE EXCEPTION 'Both locations must be cash locations of this company with a cash ledger';
   END IF;
 
-  SELECT id INTO v_type_id FROM public.voucher_types
-  WHERE company_id = v_company_id AND code = 'CTR';
-  IF v_type_id IS NULL THEN
-    SELECT id INTO v_type_id FROM public.voucher_types
-    WHERE company_id = v_company_id AND code = 'JV';
+  -- The bridge must not itself be cash, or the transfer double-counts.
+  IF NOT EXISTS (
+    SELECT 1 FROM public.ledgers
+    WHERE id = v_clearing_ledger_id AND company_id = v_company_id
+      AND ledger_type <> 'cash' AND is_active AND deleted_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Select an active non-cash clearing ledger from this company';
   END IF;
-  IF v_type_id IS NULL THEN
-    RAISE EXCEPTION 'No transfer or journal voucher type is seeded for this company';
+
+  SELECT id INTO v_payment_type FROM public.voucher_types
+  WHERE company_id = v_company_id AND code = 'CASH-P';
+  SELECT id INTO v_receipt_type FROM public.voucher_types
+  WHERE company_id = v_company_id AND code = 'CASH-R';
+  IF v_payment_type IS NULL OR v_receipt_type IS NULL THEN
+    RAISE EXCEPTION 'Cash receipt/payment voucher types are not seeded for this company';
   END IF;
 
   INSERT INTO public.vouchers (
-    company_id, financial_year_id, voucher_type_id, voucher_date, location_id,
-    draft_ref, status, narration, created_by
+    company_id, location_id, financial_year_id, voucher_type_id, voucher_date,
+    draft_ref, status, narration, created_by, cash_transfer_group_id
   ) VALUES (
-    v_company_id, v_financial_year_id, v_type_id, v_transfer_date,
-    v_from_location_id,
+    v_company_id, v_from_location_id, v_financial_year_id, v_payment_type,
+    v_transfer_date,
     'DRAFT-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8),
-    'draft', COALESCE(v_narration, 'Cash transfer between locations'), auth.uid()
+    'draft', v_narration, auth.uid(), v_group_id
   )
-  RETURNING * INTO v_voucher;
+  RETURNING id INTO v_from_voucher;
+
+  INSERT INTO public.vouchers (
+    company_id, location_id, financial_year_id, voucher_type_id, voucher_date,
+    draft_ref, status, narration, created_by, cash_transfer_group_id
+  ) VALUES (
+    v_company_id, v_to_location_id, v_financial_year_id, v_receipt_type,
+    v_transfer_date,
+    'DRAFT-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8),
+    'draft', v_narration, auth.uid(), v_group_id
+  )
+  RETURNING id INTO v_to_voucher;
 
   INSERT INTO public.voucher_lines (
     voucher_id, line_no, company_id, location_id, financial_year_id, ledger_id,
     debit_amount, credit_amount, narration
   ) VALUES
-    (v_voucher.id, 1, v_company_id, v_to_location_id, v_financial_year_id,
-     v_to_ledger, v_amount, 0, 'Cash received'),
-    (v_voucher.id, 2, v_company_id, v_from_location_id, v_financial_year_id,
-     v_from_ledger, 0, v_amount, 'Cash sent');
+    (v_from_voucher, 1, v_company_id, v_from_location_id, v_financial_year_id,
+     v_clearing_ledger_id, v_amount, 0, v_narration),
+    (v_from_voucher, 2, v_company_id, v_from_location_id, v_financial_year_id,
+     v_from_ledger, 0, v_amount, v_narration),
+    (v_to_voucher, 1, v_company_id, v_to_location_id, v_financial_year_id,
+     v_to_ledger, v_amount, 0, v_narration),
+    (v_to_voucher, 2, v_company_id, v_to_location_id, v_financial_year_id,
+     v_clearing_ledger_id, 0, v_amount, v_narration);
 
-  RETURN v_voucher;
+  RETURN jsonb_build_object(
+    'group_id', v_group_id,
+    'from_voucher_id', v_from_voucher,
+    'to_voucher_id', v_to_voucher
+  );
 END;
 $$;
 

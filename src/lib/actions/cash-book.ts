@@ -451,6 +451,174 @@ export async function createFourSampleCashEntries(input: {
   return ok({ count: 4 });
 }
 
+const THREE_CASH_BOOKS = [
+  { code: "CB1", name: "Cash Book 1" },
+  { code: "CB2", name: "Cash Book 2" },
+  { code: "CB3", name: "Cash Book 3" },
+] as const;
+
+const EXPENSE_SEED_LEDGERS = [
+  { code: "EXP-RENT", name: "Rent", group: "PL-RENT" },
+  { code: "EXP-ELEC", name: "Electricity", group: "PL-ADMIN" },
+  { code: "EXP-PETROL", name: "Petrol", group: "PL-ADMIN" },
+  { code: "EXP-OFFICE", name: "Office expense", group: "PL-ADMIN" },
+  { code: "EXP-FRT", name: "Freight", group: "PL-FRT" },
+] as const;
+
+export async function seedThreeCashBooksWithTwentyEntries(input: {
+  companyId: string;
+  voucherDate?: string;
+}): Promise<ActionResult<{ locations: number; receipts: number; payments: number }>> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+  const parsed = z.object({ companyId: z.string().uuid(), voucherDate: z.string().min(8).optional() }).safeParse(input);
+  if (!parsed.success) return fail("Select a company");
+  const access = await assertCompanyAccess(parsed.data.companyId, "write");
+  if (!access.ok) return access;
+
+  const setup = await ensureCashBookSetup(parsed.data.companyId);
+  if (!setup.ok) return setup;
+
+  const supabase = await createClient();
+  const voucherDate = parsed.data.voucherDate ?? new Date().toISOString().slice(0, 10);
+  const locationIds: string[] = [];
+
+  for (const book of THREE_CASH_BOOKS) {
+    const { data: existing } = await supabase
+      .from("locations")
+      .select("id")
+      .eq("company_id", parsed.data.companyId)
+      .eq("code", book.code)
+      .maybeSingle();
+    if (existing?.id) {
+      locationIds.push(existing.id);
+      continue;
+    }
+    const created = await createCashRegisterLocation({
+      companyId: parsed.data.companyId,
+      code: book.code,
+      name: book.name,
+    });
+    if (!created.ok) return created;
+    locationIds.push(created.data.id);
+  }
+
+  await insertBusyAccountGroups(supabase as never, parsed.data.companyId);
+  const { data: groups } = await supabase
+    .from("account_groups")
+    .select("id, code")
+    .eq("company_id", parsed.data.companyId);
+  const groupId = (code: string) => groups?.find((row) => row.code === code)?.id ?? null;
+
+  for (const expense of EXPENSE_SEED_LEDGERS) {
+    const { data: existing } = await supabase
+      .from("ledgers")
+      .select("id")
+      .eq("company_id", parsed.data.companyId)
+      .eq("code", expense.code)
+      .maybeSingle();
+    if (existing?.id) continue;
+    await supabase.from("ledgers").insert({
+      company_id: parsed.data.companyId,
+      account_group_id: groupId(expense.group),
+      code: expense.code,
+      name: expense.name,
+      ledger_type: "general",
+      is_intercompany: false,
+    });
+  }
+
+  const { data: parties } = await supabase
+    .from("parties")
+    .select("id, code")
+    .is("deleted_at", null)
+    .order("code")
+    .limit(20);
+  if (!parties?.length) return fail("Pehle Party Master mein parties banao.");
+
+  const expenseLedgers: Array<{ id: string; code: string }> = [];
+  for (const expense of EXPENSE_SEED_LEDGERS) {
+    const { data: ledger } = await supabase
+      .from("ledgers")
+      .select("id, code")
+      .eq("company_id", parsed.data.companyId)
+      .eq("code", expense.code)
+      .maybeSingle();
+    if (ledger) expenseLedgers.push(ledger);
+  }
+
+  const pickParty = (index: number) => parties[index % parties.length];
+  const pickExpense = (index: number) => expenseLedgers[index % expenseLedgers.length];
+  const loc = (index: number) => locationIds[index % locationIds.length];
+
+  const receipts = [
+    { amount: 12000, narration: "Cash received from party — collection 1", party: pickParty(0), locationId: loc(0) },
+    { amount: 8000, narration: "Cash received from party — collection 2", party: pickParty(1), locationId: loc(0) },
+    { amount: 5500, narration: "Cash received from party — collection 3", party: pickParty(2), locationId: loc(0) },
+    { amount: 3000, narration: "Cash received from party — collection 4", party: pickParty(3), locationId: loc(0) },
+    { amount: 15000, narration: "Cash received from party — collection 5", party: pickParty(4), locationId: loc(1) },
+    { amount: 4500, narration: "Cash received from party — collection 6", party: pickParty(0), locationId: loc(1) },
+    { amount: 7000, narration: "Cash received from party — collection 7", party: pickParty(1), locationId: loc(1) },
+    { amount: 2500, narration: "Cash received from party — collection 8", party: pickParty(2), locationId: loc(2) },
+    { amount: 9000, narration: "Cash received from party — collection 9", party: pickParty(3), locationId: loc(2) },
+    { amount: 2000, narration: "Cash received from party — collection 10", party: pickParty(4), locationId: loc(2) },
+  ];
+
+  const payments: Array<{
+    amount: number;
+    narration: string;
+    locationId: string;
+    partyId?: string;
+    counterpartyLedgerId?: string;
+  }> = [
+    { amount: 8500, narration: "Cash paid — rent", locationId: loc(0), counterpartyLedgerId: pickExpense(0)?.id },
+    { amount: 2200, narration: "Cash paid — electricity", locationId: loc(0), counterpartyLedgerId: pickExpense(1)?.id },
+    { amount: 5000, narration: "Cash paid to party — payment 1", locationId: loc(0), partyId: pickParty(0).id },
+    { amount: 1800, narration: "Cash paid — petrol", locationId: loc(1), counterpartyLedgerId: pickExpense(2)?.id },
+    { amount: 3500, narration: "Cash paid to party — payment 2", locationId: loc(1), partyId: pickParty(1).id },
+    { amount: 1200, narration: "Cash paid — office expense", locationId: loc(1), counterpartyLedgerId: pickExpense(3)?.id },
+    { amount: 4000, narration: "Cash paid to party — payment 3", locationId: loc(1), partyId: pickParty(2).id },
+    { amount: 2700, narration: "Cash paid — freight", locationId: loc(2), counterpartyLedgerId: pickExpense(4)?.id },
+    { amount: 6000, narration: "Cash paid to party — payment 4", locationId: loc(2), partyId: pickParty(3).id },
+    { amount: 1500, narration: "Cash paid to party — payment 5", locationId: loc(2), partyId: pickParty(4).id },
+  ];
+
+  for (const receipt of receipts) {
+    const result = await createCashBookEntry({
+      companyId: parsed.data.companyId,
+      locationId: receipt.locationId,
+      financialYearId: setup.data.financialYearId,
+      voucherDate,
+      entryKind: "receipt",
+      partyId: receipt.party.id,
+      amount: receipt.amount,
+      narration: receipt.narration,
+    });
+    if (!result.ok) return result;
+  }
+
+  for (const payment of payments) {
+    if (!payment.partyId && !payment.counterpartyLedgerId) {
+      return fail("Expense ledger nahi bana. Ledger Master check karo.");
+    }
+    const result = await createCashBookEntry({
+      companyId: parsed.data.companyId,
+      locationId: payment.locationId,
+      financialYearId: setup.data.financialYearId,
+      voucherDate,
+      entryKind: "payment",
+      partyId: payment.partyId,
+      counterpartyLedgerId: payment.counterpartyLedgerId,
+      amount: payment.amount,
+      narration: payment.narration,
+    });
+    if (!result.ok) return result;
+  }
+
+  revalidatePath("/cash-book");
+  return ok({ locations: locationIds.length, receipts: receipts.length, payments: payments.length });
+}
+
 const cashVerificationSchema = z.object({
   companyId: z.string().uuid(),
   locationId: z.string().uuid(),
@@ -482,12 +650,34 @@ export async function verifyPhysicalCash(
   return ok({ id: data.id, systemBalance, difference: Number((parsed.data.physicalCashBalance - systemBalance).toFixed(4)) });
 }
 
-const cashTransferSchema = z.object({ companyId:z.string().uuid(), financialYearId:z.string().uuid(), fromLocationId:z.string().uuid(), toLocationId:z.string().uuid(), clearingLedgerId:z.string().uuid(), transferDate:z.string().date(), amount:z.number().positive(), narration:z.string().trim().min(1).max(500) }).refine((value)=>value.fromLocationId!==value.toLocationId,"Source and destination locations must differ");
+const cashTransferSchema = z.object({ companyId:z.string().uuid(), financialYearId:z.string().uuid(), fromLocationId:z.string().uuid(), toLocationId:z.string().uuid(), clearingLedgerId:z.string().uuid(), transferDate:z.string().date(), amount:z.string().trim().regex(/^\d{1,14}(\.\d{1,4})?$/,"Amount must be a number with at most 4 decimal places").refine((v)=>/[1-9]/.test(v),"Amount must be greater than zero"), narration:z.string().trim().min(1).max(500) }).refine((value)=>value.fromLocationId!==value.toLocationId,"Source and destination locations must differ");
+/**
+ * Both location vouchers and all four lines are written by
+ * create_location_cash_transfer in one transaction. The previous version issued
+ * five statements with compensating deletes, so a failure part-way could leave
+ * one location's cash book showing a transfer the other never received.
+ */
 export async function createCashLocationTransfer(input:z.infer<typeof cashTransferSchema>):Promise<ActionResult<{groupId:string;fromVoucherId:string;toVoucherId:string}>>{
-  const auth=await requireUser();if(!auth.ok)return auth;const permission=assertPermission(auth.data,"vouchers.draft");if(!permission.ok)return permission;const parsed=cashTransferSchema.safeParse(input);if(!parsed.success)return fail(parsed.error.issues[0]?.message??"Invalid cash transfer");const d=parsed.data;
-  const companyAccess=await assertCompanyAccess(d.companyId,"write");if(!companyAccess.ok)return companyAccess;for(const locationId of [d.fromLocationId,d.toLocationId]){const access=await assertLocationAccess(locationId,"write");if(!access.ok)return access;}
-  const supabase=await createClient();const[{data:locations},{data:year},{data:clearing},{data:types}]=await Promise.all([supabase.from("locations").select("id,company_id,cash_ledger_id,is_cash_location").in("id",[d.fromLocationId,d.toLocationId]),supabase.from("financial_years").select("id").eq("id",d.financialYearId).eq("company_id",d.companyId).maybeSingle(),supabase.from("ledgers").select("id,company_id,ledger_type").eq("id",d.clearingLedgerId).maybeSingle(),supabase.from("voucher_types").select("id,code").eq("company_id",d.companyId).in("code",["CASH-R","CASH-P"])]);
-  if(!year||(locations??[]).length!==2||(locations??[]).some((location)=>location.company_id!==d.companyId||!location.is_cash_location||!location.cash_ledger_id))return fail("Financial year or cash locations are invalid");if(!clearing||clearing.company_id!==d.companyId||clearing.ledger_type==="cash")return fail("Select a non-cash transfer clearing ledger from the company");const receiptType=(types??[]).find((type)=>type.code==="CASH-R"),paymentType=(types??[]).find((type)=>type.code==="CASH-P");if(!receiptType||!paymentType)return fail("Cash receipt/payment voucher types are missing");
-  const groupId=crypto.randomUUID();const byId=new Map((locations??[]).map((location)=>[location.id,location]));const make=async(locationId:string,typeId:string)=>supabase.from("vouchers").insert({company_id:d.companyId,location_id:locationId,financial_year_id:d.financialYearId,voucher_type_id:typeId,voucher_date:d.transferDate,draft_ref:`DRAFT-${crypto.randomUUID().slice(0,8)}`,narration:d.narration,created_by:auth.data.userId,cash_transfer_group_id:groupId}).select("id").single();const from=await make(d.fromLocationId,paymentType.id);const to=await make(d.toLocationId,receiptType.id);if(from.error||!from.data||to.error||!to.data){if(from.data)await supabase.from("vouchers").delete().eq("id",from.data.id);if(to.data)await supabase.from("vouchers").delete().eq("id",to.data.id);return fail(from.error?.message??to.error?.message??"Could not create cash transfer vouchers");}
-  const{error}=await supabase.from("voucher_lines").insert([{voucher_id:from.data.id,line_no:1,company_id:d.companyId,location_id:d.fromLocationId,financial_year_id:d.financialYearId,ledger_id:d.clearingLedgerId,debit_amount:d.amount,credit_amount:0,narration:d.narration},{voucher_id:from.data.id,line_no:2,company_id:d.companyId,location_id:d.fromLocationId,financial_year_id:d.financialYearId,ledger_id:byId.get(d.fromLocationId)!.cash_ledger_id,debit_amount:0,credit_amount:d.amount,narration:d.narration},{voucher_id:to.data.id,line_no:1,company_id:d.companyId,location_id:d.toLocationId,financial_year_id:d.financialYearId,ledger_id:byId.get(d.toLocationId)!.cash_ledger_id,debit_amount:d.amount,credit_amount:0,narration:d.narration},{voucher_id:to.data.id,line_no:2,company_id:d.companyId,location_id:d.toLocationId,financial_year_id:d.financialYearId,ledger_id:d.clearingLedgerId,debit_amount:0,credit_amount:d.amount,narration:d.narration}]);if(error){await supabase.from("vouchers").delete().in("id",[from.data.id,to.data.id]);return fail(error.message);}revalidatePath("/cash-book");return ok({groupId,fromVoucherId:from.data.id,toVoucherId:to.data.id});
+  const auth=await requireUser();if(!auth.ok)return auth;
+  const permission=assertPermission(auth.data,"vouchers.draft");if(!permission.ok)return permission;
+  const parsed=cashTransferSchema.safeParse(input);if(!parsed.success)return fail(parsed.error.issues[0]?.message??"Invalid cash transfer");
+  const d=parsed.data;
+  const companyAccess=await assertCompanyAccess(d.companyId,"write");if(!companyAccess.ok)return companyAccess;
+  for(const locationId of [d.fromLocationId,d.toLocationId]){const access=await assertLocationAccess(locationId,"write");if(!access.ok)return access;}
+  const supabase=await createClient();
+  const{data,error}=await supabase.rpc("create_location_cash_transfer",{p_payload:{
+    company_id:d.companyId,
+    financial_year_id:d.financialYearId,
+    from_location_id:d.fromLocationId,
+    to_location_id:d.toLocationId,
+    clearing_ledger_id:d.clearingLedgerId,
+    transfer_date:d.transferDate,
+    amount:d.amount,
+    narration:d.narration,
+  }});
+  if(error)return fail(error.message);
+  const result=data as{group_id?:string;from_voucher_id?:string;to_voucher_id?:string}|null;
+  if(!result?.group_id||!result.from_voucher_id||!result.to_voucher_id)return fail("Could not create cash transfer");
+  revalidatePath("/cash-book");revalidatePath("/reports");
+  return ok({groupId:result.group_id,fromVoucherId:result.from_voucher_id,toVoucherId:result.to_voucher_id});
 }

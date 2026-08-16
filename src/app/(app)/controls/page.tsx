@@ -4,6 +4,18 @@ import { requireUser } from "@/lib/auth/guards";
 import { formatMoney } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
 
+type AuditPayload = Record<string, unknown> | null;
+
+function auditDetail(table: string, recordId: string, before: AuditPayload, after: AuditPayload, context: AuditPayload) {
+  const row = after ?? before ?? {};
+  const label = ["voucher_number", "draft_ref", "code", "name", "account_name", "file_name", "alias_text", "document_number"]
+    .map((key) => row[key])
+    .find((value): value is string => typeof value === "string" && value.length > 0);
+  const narration = typeof row.narration === "string" ? row.narration : null;
+  const reason = typeof context?.reason === "string" ? context.reason : null;
+  return [label ? `${table}: ${label}` : `${table}: ${recordId}`, narration, reason].filter(Boolean).join(" — ");
+}
+
 export default async function ControlsPage() {
   const auth = await requireUser();
   if (!auth.ok || (!auth.data.roles.includes("admin") && !auth.data.permissions["periods.lock"])) {
@@ -13,7 +25,7 @@ export default async function ControlsPage() {
   const [{ data: periods }, { data: vouchers }, { data: audit }, { data: companies }, { data: years }, { data: equityLedgers }, { data: closures }, { data: closingStocks }] = await Promise.all([
     supabase.from("accounting_periods").select("id, period_no, start_date, end_date, is_locked, companies(code), financial_years(code)").order("start_date", { ascending: false }).limit(120),
     supabase.from("vouchers").select("id, voucher_number, voucher_date, companies(code)").eq("status", "posted").is("reversed_by_voucher_id", null).not("voucher_number", "is", null).order("voucher_date", { ascending: false }).limit(200),
-    supabase.from("audit_log").select("occurred_at, actor_id, table_name, record_id, action, companies(code)").order("occurred_at", { ascending: false }).limit(200),
+    supabase.from("audit_log").select("occurred_at, actor_id, table_name, record_id, action, old_row, new_row, context, companies(code), profiles!audit_log_actor_id_fkey(full_name,email)").order("occurred_at", { ascending: false }).limit(200),
     supabase.from("companies").select("id,code,name").order("code"),
     supabase.from("financial_years").select("id, company_id, code, is_closed").order("start_date", { ascending: false }),
     supabase.from("ledgers").select("id, company_id, code, name, account_groups!inner(nature)").eq("account_groups.nature", "equity").eq("is_active", true),
@@ -27,6 +39,6 @@ export default async function ControlsPage() {
     <div><h2 className="mb-3 text-lg font-semibold">Financial-year close</h2><FinancialYearCloseForm years={years ?? []} equityLedgers={equityLedgers ?? []} /><div className="mt-4"><DataTable columns={["Company", "From FY", "To FY", "Opening voucher", "Closed at"]} rows={(closures ?? []).map((row) => [(row.companies as unknown as { code: string } | null)?.code ?? "—", (row.from_year as unknown as { code: string } | null)?.code ?? "—", (row.to_year as unknown as { code: string } | null)?.code ?? "—", (row.vouchers as unknown as { voucher_number: string } | null)?.voucher_number ?? "—", new Date(row.closed_at).toLocaleString("en-IN")])} /></div></div>
     <div><h2 className="mb-3 text-lg font-semibold">Voucher reversal</h2><ReversalForm vouchers={reversalVouchers} /></div>
     <div><h2 className="mb-3 text-lg font-semibold">Accounting periods</h2><DataTable columns={["Company", "FY", "Period", "From", "To", "Status", "Action"]} rows={(periods ?? []).map((period) => [(period.companies as unknown as { code: string } | null)?.code ?? "—", (period.financial_years as unknown as { code: string } | null)?.code ?? "—", period.period_no, period.start_date, period.end_date, period.is_locked ? "Locked" : "Open", <PeriodLockButton key={period.id} periodId={period.id} locked={period.is_locked} />])} /></div>
-    <div><h2 className="mb-3 text-lg font-semibold">Audit log</h2><DataTable columns={["Time", "Company", "Table", "Record", "Action", "Actor"]} rows={(audit ?? []).map((row) => [new Date(row.occurred_at).toLocaleString("en-IN"), (row.companies as unknown as { code: string } | null)?.code ?? "—", row.table_name, row.record_id, row.action, row.actor_id ?? "System"])} /></div>
+    <div><h2 className="mb-1 text-lg font-semibold">Activity & audit log</h2><p className="mb-3 text-sm text-[var(--muted)]">Immutable history of who created, changed, approved, posted, reversed, or matched a record. System actions are identified separately.</p><DataTable columns={["Time", "Company", "Who", "Action", "What changed"]} rows={(audit ?? []).map((row) => { const actor = row.profiles as unknown as { full_name: string | null; email: string | null } | null; return [new Date(row.occurred_at).toLocaleString("en-IN"), (row.companies as unknown as { code: string } | null)?.code ?? "—", actor?.full_name || actor?.email || (row.actor_id ? `User ${row.actor_id.slice(0, 8)}` : "System"), row.action, auditDetail(row.table_name, row.record_id, row.old_row as AuditPayload, row.new_row as AuditPayload, row.context as AuditPayload)]; })} /></div>
   </div>;
 }
