@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { createAccountGroup } from "@/lib/actions/masters";
+import { createAccountGroup, seedBusyAccountGroups, seedBusyAccountGroupsForAllCompanies } from "@/lib/actions/masters";
 import { Button, Input, Select } from "@/components/ui/primitives";
 
 type Nature = "asset" | "liability" | "equity" | "income" | "expense";
@@ -102,9 +102,37 @@ export function AccountGroupForm({
         Inter-company control group
       </label>
       {error ? <p className="text-sm text-[var(--danger)] md:col-span-2">{error}</p> : null}
-      <div className="md:col-span-2">
+      <div className="flex flex-wrap gap-2 md:col-span-2">
         <Button type="submit" disabled={pending}>
           Create account group
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={pending || !companyId}
+          onClick={() =>
+            startTransition(async () => {
+              setError(null);
+              const result = await seedBusyAccountGroups(companyId);
+              if (!result.ok) setError(result.error);
+            })
+          }
+        >
+          Add Busy heads to this company
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={pending}
+          onClick={() =>
+            startTransition(async () => {
+              setError(null);
+              const result = await seedBusyAccountGroupsForAllCompanies();
+              if (!result.ok) setError(result.error);
+            })
+          }
+        >
+          Add Busy heads to all companies
         </Button>
       </div>
     </form>

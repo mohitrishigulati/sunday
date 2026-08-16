@@ -58,7 +58,7 @@ body {
 .bank-statement-grid th:nth-child(11), .bank-statement-grid td:nth-child(11) { width: 15%; }
 .bank-statement-grid th:nth-child(12), .bank-statement-grid td:nth-child(12) { width: 5%; }
 
-.cash-register-section { overflow: hidden; border: 1px solid #b9ad84; border-radius: 0.75rem; background: #fffdf3; box-shadow: 0 8px 24px rgba(65, 54, 27, 0.09); }
+.cash-register-section { overflow: visible; border: 1px solid #b9ad84; border-radius: 0.75rem; background: #fffdf3; box-shadow: 0 8px 24px rgba(65, 54, 27, 0.09); }
 .cash-register-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; padding: 1rem 1.25rem; border-bottom: 1px solid #cfc39b; background: linear-gradient(180deg, #fffef8 0%, #f6f0d9 100%); }
 .cash-register-heading h3 { font-family: var(--font-display), Georgia, serif; font-size: 1.25rem; font-weight: 700; }
 .cash-register-heading p { color: #6d654d; }

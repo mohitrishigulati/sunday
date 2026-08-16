@@ -26,7 +26,7 @@ export default async function CashBookPage() {
     supabase.from("locations").select("id, company_id, code, name, cash_ledger_id").eq("is_cash_location", true).not("cash_ledger_id", "is", null).order("code"),
     supabase.from("financial_years").select("id, company_id, code, start_date, end_date").order("start_date", { ascending: false }),
     supabase.from("ledgers").select("id, company_id, party_id, code, name, ledger_type").is("deleted_at", null).eq("is_active", true).order("code"),
-    supabase.from("parties").select("id, group_id, code, name, party_kinds").eq("is_active", true).is("deleted_at", null).order("name"),
+    supabase.from("parties").select("id, group_id, code, name, party_kinds").is("deleted_at", null).order("name"),
     supabase.from("vouchers").select("id, created_by, draft_ref, voucher_number, status, voucher_date, narration, companies(code), voucher_types(code)").order("created_at", { ascending: false }).limit(100),
     supabase
       .from("ledger_postings")

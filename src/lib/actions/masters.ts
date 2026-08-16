@@ -10,6 +10,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { fail, ok, type ActionResult } from "@/lib/types";
 import { indianFinancialYearForDate, indianFinancialYearsCovering } from "@/lib/financial-year";
+import { insertBusyAccountGroups } from "@/lib/busy-account-groups";
 
 const companySchema = z.object({
   groupId: z.string().uuid(),
@@ -67,6 +68,13 @@ export async function createCompany(
     can_approve: true,
     can_manage: true,
   });
+
+  const rpcSeed = await supabase.rpc("seed_company_account_groups", {
+    p_company_id: data.id,
+  });
+  if (rpcSeed.error) {
+    await insertBusyAccountGroups(supabase, data.id);
+  }
 
   await ensureIndianFinancialYear(data.id, new Date().toISOString().slice(0, 10));
 
@@ -126,10 +134,17 @@ export async function createLocation(
   // A cash location must always be usable immediately. If the user does not
   // select an existing cash ledger, create a dedicated one for the location.
   if (isCashLocation && !cashLedgerId) {
+    const { data: cashGroup } = await supabase
+      .from("account_groups")
+      .select("id")
+      .eq("company_id", parsed.data.companyId)
+      .eq("code", "BS-CASH")
+      .maybeSingle();
     const { data: cashLedger, error: cashLedgerError } = await supabase
       .from("ledgers")
       .insert({
         company_id: parsed.data.companyId,
+        account_group_id: cashGroup?.id ?? null,
         code: `CASH-${parsed.data.code.toUpperCase()}`,
         name: `${parsed.data.name} Cash`,
         ledger_type: "cash",
@@ -214,10 +229,18 @@ export async function createBankAccount(
 
   const supabase = await createClient();
 
+  const { data: bankGroup } = await supabase
+    .from("account_groups")
+    .select("id")
+    .eq("company_id", parsed.data.companyId)
+    .eq("code", "BS-BANK")
+    .maybeSingle();
+
   const { data: ledger, error: ledgerError } = await supabase
     .from("ledgers")
     .insert({
       company_id: parsed.data.companyId,
+      account_group_id: bankGroup?.id ?? null,
       code: parsed.data.ledgerCode.toUpperCase(),
       name: parsed.data.ledgerName,
       ledger_type: "bank",
@@ -323,6 +346,65 @@ export async function createAccountGroup(
   revalidatePath("/masters/account-groups");
   revalidatePath("/masters/ledgers");
   return ok({ id: data.id });
+}
+
+export async function seedBusyAccountGroups(
+  companyId: string,
+): Promise<ActionResult<{ id: string }>> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
+  const parsed = z.string().uuid().safeParse(companyId);
+  if (!parsed.success) return fail("Select a company");
+
+  const access = await assertCompanyAccess(parsed.data, "manage");
+  if (!access.ok) return access;
+
+  const supabase = await createClient();
+  const rpcSeed = await supabase.rpc("seed_company_account_groups", {
+    p_company_id: parsed.data,
+  });
+  if (rpcSeed.error) {
+    const inserted = await insertBusyAccountGroups(supabase, parsed.data);
+    if (!inserted.ok) return fail(inserted.error);
+  }
+
+  revalidatePath("/masters/account-groups");
+  revalidatePath("/masters/ledgers");
+  revalidatePath("/reports");
+  return ok({ id: parsed.data });
+}
+
+export async function seedBusyAccountGroupsForAllCompanies(): Promise<
+  ActionResult<{ id: string; count: number }>
+> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+  if (!auth.data.roles.includes("admin")) {
+    return fail("Only an admin can seed heads for every company");
+  }
+
+  const supabase = await createClient();
+  const { data: companies, error } = await supabase
+    .from("companies")
+    .select("id")
+    .is("deleted_at", null);
+  if (error) return fail(error.message);
+
+  for (const company of companies ?? []) {
+    const rpcSeed = await supabase.rpc("seed_company_account_groups", {
+      p_company_id: company.id,
+    });
+    if (rpcSeed.error) {
+      const inserted = await insertBusyAccountGroups(supabase, company.id);
+      if (!inserted.ok) return fail(inserted.error);
+    }
+  }
+
+  revalidatePath("/masters/account-groups");
+  revalidatePath("/masters/ledgers");
+  revalidatePath("/reports");
+  return ok({ id: auth.data.userId, count: companies?.length ?? 0 });
 }
 
 const ledgerSchema = z.object({
