@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { formatMoney } from "@/lib/format";
+import { indianFinancialYearForDate } from "@/lib/financial-year";
 
 const MONEY_SCALE = 10_000n;
 
@@ -17,10 +18,18 @@ type CashRegisterEntry = {
 
 export type CashRegister = {
   id: string;
+  companyId: string;
   companyCode: string;
   locationCode: string;
   locationName: string;
   entries: CashRegisterEntry[];
+};
+
+type FinancialYear = {
+  company_id: string;
+  code: string;
+  start_date?: string;
+  end_date?: string;
 };
 
 function decimalUnits(value: string | number): bigint {
@@ -42,7 +51,30 @@ function displayDate(value: string): string {
   return year && month && day ? `${day}/${month}/${year}` : value;
 }
 
-export function TraditionalCashRegister({ registers }: { registers: CashRegister[] }) {
+export function TraditionalCashRegister({
+  registers,
+  financialYears = [],
+}: {
+  registers: CashRegister[];
+  financialYears?: FinancialYear[];
+}) {
+  const currentFy = indianFinancialYearForDate();
+  const fyCodes = useMemo(() => {
+    const codes = new Map<string, string>();
+    for (const year of financialYears) {
+      if (!codes.has(year.code)) codes.set(year.code, year.start_date ?? year.code);
+    }
+    if (!codes.has(currentFy.code)) codes.set(currentFy.code, currentFy.startDate);
+    return [...codes.entries()].sort((a, b) => b[1].localeCompare(a[1])).map(([code]) => code);
+  }, [financialYears, currentFy.code, currentFy.startDate]);
+  const companies = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const register of registers) seen.set(register.companyId, register.companyCode);
+    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [registers]);
+
+  const [companyId, setCompanyId] = useState("");
+  const [fyCode, setFyCode] = useState(currentFy.code);
   const [locationId, setLocationId] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -50,10 +82,24 @@ export function TraditionalCashRegister({ registers }: { registers: CashRegister
     return <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6 text-sm text-[var(--muted)]">No configured cash location is available.</div>;
   }
 
-  const visibleRegisters = locationId ? registers.filter((register) => register.id === locationId) : registers;
-  return <div className="space-y-4"><div className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 md:grid-cols-3"><label className="text-sm"><span className="mb-1 block font-medium">Cash register</span><select className="w-full rounded border px-2 py-1.5" value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">All locations</option>{registers.map((register) => <option key={register.id} value={register.id}>{register.companyCode} — {register.locationCode} — {register.locationName}</option>)}</select></label><label className="text-sm"><span className="mb-1 block font-medium">From date</span><input className="w-full rounded border px-2 py-1.5" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label><label className="text-sm"><span className="mb-1 block font-medium">To date</span><input className="w-full rounded border px-2 py-1.5" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label></div>{visibleRegisters.map((register) => {
-    const openingBalance = register.entries.filter((entry) => !fromDate || entry.voucherDate < fromDate).reduce((sum, entry) => sum + decimalUnits(entry.debitAmount) - decimalUnits(entry.creditAmount), 0n);
-    const selectedEntries = register.entries.filter((entry) => (!fromDate || entry.voucherDate >= fromDate) && (!toDate || entry.voucherDate <= toDate));
+  const fyRange = fyCode
+    ? financialYears.find((year) => year.code === fyCode) ??
+      (fyCode === currentFy.code ? { start_date: currentFy.startDate, end_date: currentFy.endDate } : null)
+    : null;
+  const periodStart = fromDate || fyRange?.start_date || "";
+  const periodEnd = toDate || fyRange?.end_date || "";
+
+  const companyRegisters = companyId
+    ? registers.filter((register) => register.companyId === companyId)
+    : registers;
+  const locationOptions = companyRegisters;
+  const visibleRegisters = locationId
+    ? companyRegisters.filter((register) => register.id === locationId)
+    : companyRegisters;
+
+  return <div className="space-y-4"><div className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 md:grid-cols-5"><label className="text-sm"><span className="mb-1 block font-medium">Company</span><select className="w-full rounded border px-2 py-1.5" value={companyId} onChange={(event) => { setCompanyId(event.target.value); setLocationId(""); }}><option value="">All companies</option>{companies.map(([id, code]) => <option key={id} value={id}>{code}</option>)}</select></label><label className="text-sm"><span className="mb-1 block font-medium">Financial year</span><select className="w-full rounded border px-2 py-1.5" value={fyCode} onChange={(event) => setFyCode(event.target.value)}>{fyCodes.map((code) => <option key={code} value={code}>{code}</option>)}</select></label><label className="text-sm"><span className="mb-1 block font-medium">Cash register</span><select className="w-full rounded border px-2 py-1.5" value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">All cash books</option>{locationOptions.map((register) => <option key={register.id} value={register.id}>{register.companyCode} — {register.locationCode} — {register.locationName}</option>)}</select></label><label className="text-sm"><span className="mb-1 block font-medium">From date</span><input className="w-full rounded border px-2 py-1.5" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label><label className="text-sm"><span className="mb-1 block font-medium">To date</span><input className="w-full rounded border px-2 py-1.5" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label></div><p className="text-sm text-[var(--muted)]">{companyId ? "Is company ki saari cash books." : "Sabhi companies ki cash books."} Financial year {fyCode} har register par same hai.</p>{visibleRegisters.map((register) => {
+    const openingBalance = register.entries.filter((entry) => !periodStart || entry.voucherDate < periodStart).reduce((sum, entry) => sum + decimalUnits(entry.debitAmount) - decimalUnits(entry.creditAmount), 0n);
+    const selectedEntries = register.entries.filter((entry) => (!periodStart || entry.voucherDate >= periodStart) && (!periodEnd || entry.voucherDate <= periodEnd));
     let runningBalance = openingBalance;
     const rows = selectedEntries.map((entry) => {
       const receipt = decimalUnits(entry.debitAmount);

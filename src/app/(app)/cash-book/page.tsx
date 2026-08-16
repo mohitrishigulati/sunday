@@ -65,6 +65,7 @@ export default async function CashBookPage() {
   const companyCodeById = new Map((companies ?? []).map((company) => [company.id, company.code]));
   const cashRegisters = (locations ?? []).map((location) => ({
     id: location.id,
+    companyId: location.company_id,
     companyCode: companyCodeById.get(location.company_id) ?? "—",
     locationCode: location.code,
     locationName: location.name,
@@ -88,7 +89,7 @@ export default async function CashBookPage() {
     <div className="space-y-8">
       <PageHeader
         title="Cash Book"
-        description="Register jaisa: left Received from, right Paid to. Entry draft rehti hai jab tak approve/post na ho."
+        description="Financial year har cash book par same. Neeche company-wise ya sabhi companies ki cash books dekho."
       />
       <CashEntryForm
         companies={companies ?? []}
@@ -100,7 +101,7 @@ export default async function CashBookPage() {
       <div><h2 className="mb-3 text-lg font-semibold">Cash transfer between locations</h2><CashTransferForm companies={companies ?? []} locations={(locations ?? []).map((location)=>({id:location.id,company_id:location.company_id,code:location.code,name:location.name}))} years={financialYears ?? []} ledgers={ledgers ?? []}/></div>
       <div>
         <div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">Posted cash register</h2><PrintCashBookButton /></div>
-        <TraditionalCashRegister registers={cashRegisters} />
+        <TraditionalCashRegister registers={cashRegisters} financialYears={financialYears ?? []} />
       </div>
       <div>
         <h2 className="mb-3 text-lg font-semibold">Daily physical cash verification</h2>

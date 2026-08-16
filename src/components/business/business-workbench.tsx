@@ -36,7 +36,7 @@ export async function BusinessWorkbench({ lockType }: { lockType?: "sale" | "pur
 
   return <div className="space-y-8">
     <PageHeader title={title} description="Invoice-line GST/TDS accounting, bill-wise outstanding allocation and due-date ageing." />
-    <BusinessDocumentForm companies={companies ?? []} years={years ?? []} parties={parties ?? []} ledgers={ledgers ?? []} costCentres={costCentres ?? []} salesmen={salesmen ?? []} lockType={lockType} />
+    <BusinessDocumentForm companies={companies ?? []} years={years ?? []} parties={parties ?? []} ledgers={ledgers ?? []} costCentres={costCentres ?? []} salesmen={salesmen ?? []} lockType={lockType} documents={(documents ?? []) as never[]} />
     <DataTable columns={["Company","Type","Invoice","Date","Party","Taxable","GST","TDS","Total","Outstanding","Ageing","Status","Attachment","Actions","Allocate receipt/payment"]} rows={visibleDocuments.map((document) => {
       const voucher = document.vouchers as unknown as {id:string;created_by:string;status:string;voucher_number:string|null;draft_ref:string;attachments:{storage_path:string;file_name:string}|null}|null;
       const outstanding = Number(document.total_amount) - (allocated.get(document.id) ?? 0);

@@ -46,7 +46,7 @@ const isPositive = (v: string) => compareDecimal(v, "0") > 0;
 
 const itemSchema = z.object({ description: z.string().trim().min(1), hsnSac: z.string().trim().optional(), quantity: decimal().refine(isPositive, "Quantity must be greater than zero"), unit: z.string().trim().min(1), rate: decimal(), discountAmount: decimal().default("0"), gstRate: decimal({ min: "0", max: "100" }), tradeLedgerId: z.string().uuid(), costCentreId: z.string().uuid().optional(), salesmanId: z.string().uuid().optional() });
 const attachmentSchema = z.object({ storagePath: z.string().min(1).max(1000), fileName: z.string().min(1).max(255), mimeType: z.string().max(255).optional(), fileHash: z.string().length(64) });
-const documentSchema = z.object({ companyId: z.string().uuid(), financialYearId: z.string().uuid(), documentType: z.enum(["sale", "purchase"]), documentNumber: z.string().trim().min(1).max(100), documentDate: z.string().date(), dueDate: z.string().date(), partyId: z.string().uuid(), partyLedgerId: z.string().uuid(), placeOfSupply: z.string().length(2).optional(), isInterstate: z.boolean(), cgstLedgerId: z.string().uuid().optional(), sgstLedgerId: z.string().uuid().optional(), igstLedgerId: z.string().uuid().optional(), tdsLedgerId: z.string().uuid().optional(), roundOffLedgerId: z.string().uuid().optional(), tdsSection: z.string().trim().optional(), tdsRate: decimal({ min: "0", max: "100" }).default("0"), roundOff: decimal({ min: "-10", max: "10", allowNegative: true }).default("0"), ewayBillNo: z.string().trim().optional(), narration: z.string().trim().optional(), attachment: attachmentSchema.optional(), items: z.array(itemSchema).min(1).max(200) });
+const documentSchema = z.object({ companyId: z.string().uuid(), financialYearId: z.string().uuid(), documentType: z.enum(["sale", "purchase", "credit_note", "debit_note"]), originalDocumentId: z.string().uuid().optional(), documentNumber: z.string().trim().min(1).max(100), documentDate: z.string().date(), dueDate: z.string().date(), partyId: z.string().uuid(), partyLedgerId: z.string().uuid(), placeOfSupply: z.string().length(2).optional(), isInterstate: z.boolean(), cgstLedgerId: z.string().uuid().optional(), sgstLedgerId: z.string().uuid().optional(), igstLedgerId: z.string().uuid().optional(), tdsLedgerId: z.string().uuid().optional(), roundOffLedgerId: z.string().uuid().optional(), tdsSection: z.string().trim().optional(), tdsRate: decimal({ min: "0", max: "100" }).default("0"), roundOff: decimal({ min: "-10", max: "10", allowNegative: true }).default("0"), ewayBillNo: z.string().trim().optional(), narration: z.string().trim().optional(), attachment: attachmentSchema.optional(), items: z.array(itemSchema).min(1).max(200) });
 
 export async function createBusinessDocument(input: z.infer<typeof documentSchema>): Promise<ActionResult<{ id: string; voucherId: string }>> {
   const auth = await requireUser(); if (!auth.ok) return auth; const permission = assertPermission(auth.data, "vouchers.draft"); if (!permission.ok) return permission;
@@ -63,6 +63,9 @@ export async function createBusinessDocument(input: z.infer<typeof documentSchem
       company_id: data.companyId,
       financial_year_id: data.financialYearId,
       document_type: data.documentType,
+      // A credit note adjusts a sale, a debit note a purchase. The database
+      // enforces that pairing and caps the notes at the invoice value.
+      original_document_id: data.originalDocumentId ?? null,
       document_number: data.documentNumber,
       document_date: data.documentDate,
       due_date: data.dueDate,

@@ -6,7 +6,6 @@ import { createCashBookEntry, createCashRegisterLocation, createFourSampleCashEn
 import { createParty } from "@/lib/actions/masters";
 import { indianFinancialYearForDate } from "@/lib/financial-year";
 import { Button, Input, Select } from "@/components/ui/primitives";
-import { FinancialYearSelect } from "@/components/masters/financial-year-select";
 
 type Company = { id: string; group_id: string; code: string; name: string };
 type Location = { id: string; company_id: string; code: string; name: string; cash_ledger_id: string | null };
@@ -32,6 +31,7 @@ export function CashEntryForm({
   const router = useRouter();
   const [companyId, setCompanyId] = useState("");
   const [locationId, setLocationId] = useState("");
+  const [fyCode, setFyCode] = useState(() => indianFinancialYearForDate().code);
   const [financialYearId, setFinancialYearId] = useState("");
   const [voucherDate, setVoucherDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [partiesList, setPartiesList] = useState(parties);
@@ -69,20 +69,25 @@ export function CashEntryForm({
     [ledgers, companyId],
   );
 
+  const fyCodes = useMemo(() => {
+    const codes = new Map<string, string>();
+    for (const year of financialYears) {
+      if (!codes.has(year.code)) codes.set(year.code, year.start_date ?? year.code);
+    }
+    const current = indianFinancialYearForDate();
+    if (!codes.has(current.code)) codes.set(current.code, current.startDate);
+    return [...codes.entries()].sort((a, b) => b[1].localeCompare(a[1])).map(([code]) => code);
+  }, [financialYears]);
+
+  function yearIdFor(nextCompanyId: string, code: string) {
+    return financialYears.find((year) => year.company_id === nextCompanyId && year.code === code)?.id ?? "";
+  }
+
   function selectCompany(nextId: string) {
     setCompanyId(nextId);
     const companyLocations = locations.filter((item) => item.company_id === nextId);
     setLocationId(companyLocations[0]?.id ?? "");
-    const fy = indianFinancialYearForDate();
-    const match = financialYears.find(
-      (year) =>
-        year.company_id === nextId &&
-        year.start_date &&
-        year.end_date &&
-        year.start_date <= fy.startDate &&
-        year.end_date >= fy.startDate,
-    );
-    setFinancialYearId(match?.id ?? financialYears.find((year) => year.company_id === nextId)?.id ?? "");
+    setFinancialYearId(yearIdFor(nextId, fyCode));
   }
 
   function save(kind: "receipt" | "payment", formData: FormData) {
@@ -146,13 +151,27 @@ export function CashEntryForm({
             </option>
           ))}
         </Select>
-        <FinancialYearSelect
-          companyId={companyId}
-          years={financialYears}
-          value={financialYearId}
+        <Select
+          label="Financial year (all cash books)"
           required
-          onChange={setFinancialYearId}
-        />
+          value={fyCode}
+          onChange={(event) => {
+            const code = event.target.value;
+            setFyCode(code);
+            if (companyId) setFinancialYearId(yearIdFor(companyId, code));
+          }}
+        >
+          {fyCodes.map((code) => (
+            <option key={code} value={code}>
+              {code}
+            </option>
+          ))}
+        </Select>
+        {companyId && !financialYearId ? (
+          <p className="text-sm text-[var(--danger)] md:col-span-2">
+            Is company par {fyCode} nahi hai. Neeche Create cash register & year dabao.
+          </p>
+        ) : null}
         <div className="space-y-2 rounded-md border border-dashed border-[var(--border)] p-3 md:col-span-2">
           <p className="text-sm font-medium">+ Add cash location yahin</p>
           <div className="grid gap-2 md:grid-cols-[1fr_2fr_auto]">
@@ -210,6 +229,7 @@ export function CashEntryForm({
             }
             setLocationId(result.data.locationId);
             setFinancialYearId(result.data.financialYearId);
+            setFyCode(result.data.yearCode);
             setSetupHint(`Cash register: ${result.data.locationLabel}. Year: ${result.data.yearCode}.`);
             router.refresh();
           })
