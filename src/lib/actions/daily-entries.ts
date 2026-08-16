@@ -170,3 +170,53 @@ export async function createBankBookEntry(
   if (result.ok) revalidatePath("/bank-book");
   return result;
 }
+
+const contraSchema = z.object({
+  companyId: z.string().uuid(),
+  financialYearId: z.string().uuid(),
+  cashLocationId: z.string().uuid(),
+  bankAccountId: z.string().uuid(),
+  voucherDate: z.string().date(),
+  direction: z.enum(["cash_to_bank", "bank_to_cash"]),
+  amount: z.number().positive(),
+  reference: z.string().trim().max(100).optional(),
+  narration: z.string().trim().min(1).max(500),
+});
+
+/** Creates a cash↔bank transfer as one true CONTRA voucher. */
+export async function createContraEntry(
+  input: z.infer<typeof contraSchema>,
+): Promise<ActionResult<{ id: string }>> {
+  const parsed = contraSchema.safeParse(input);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid contra entry");
+  const data = parsed.data;
+  const supabase = await createClient();
+  const [{ data: location }, { data: account }] = await Promise.all([
+    supabase.from("locations").select("company_id,cash_ledger_id,is_cash_location").eq("id", data.cashLocationId).maybeSingle(),
+    supabase.from("bank_accounts").select("company_id,ledger_id").eq("id", data.bankAccountId).eq("is_active", true).maybeSingle(),
+  ]);
+  if (!location?.is_cash_location || !location.cash_ledger_id || location.company_id !== data.companyId) return fail("Select a cash register belonging to the company");
+  if (!account || account.company_id !== data.companyId) return fail("Select a bank account belonging to the company");
+
+  const cashToBank = data.direction === "cash_to_bank";
+  const narration = data.reference ? `${data.narration} (${data.reference})` : data.narration;
+  const result = await createDraftVoucher({
+    companyId: data.companyId,
+    financialYearId: data.financialYearId,
+    locationId: data.cashLocationId,
+    voucherDate: data.voucherDate,
+    voucherTypeCode: "CONTRA",
+    narration,
+    lines: [
+      { ledgerId: account.ledger_id, debitAmount: cashToBank ? data.amount : 0, creditAmount: cashToBank ? 0 : data.amount, narration },
+      { ledgerId: location.cash_ledger_id, debitAmount: cashToBank ? 0 : data.amount, creditAmount: cashToBank ? data.amount : 0, narration },
+    ],
+  });
+  if (result.ok) {
+    revalidatePath("/cash-book");
+    revalidatePath("/bank-book");
+    revalidatePath("/dashboard");
+    revalidatePath("/transactions/contra");
+  }
+  return result;
+}

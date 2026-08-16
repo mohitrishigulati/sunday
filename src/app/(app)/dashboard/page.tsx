@@ -85,6 +85,9 @@ export default async function DashboardPage() {
     { data: banks },
     unmatchedResult,
     untaggedResult,
+    draftResult,
+    cashDifferenceResult,
+    reconciliationResult,
   ] = await Promise.all([
     supabase.rpc("dashboard_daily_summary", { p_as_of: today }),
     supabase.rpc("dashboard_daily_balances", { p_as_of: today }),
@@ -97,6 +100,11 @@ export default async function DashboardPage() {
       : Promise.resolve({ count: 0, error: null }),
     canViewStatements
       ? supabase.from("bank_statement_lines").select("id", { count: "exact", head: true }).eq("match_status", "unmatched").is("suggested_party_id", null).is("counterparty_bank_account_id", null)
+      : Promise.resolve({ count: 0, error: null }),
+    supabase.from("vouchers").select("id", { count: "exact", head: true }).in("status", ["draft", "submitted", "approved"]),
+    supabase.from("cash_verifications").select("id", { count: "exact", head: true }).neq("difference", 0),
+    canViewStatements
+      ? supabase.from("bank_reconciliations").select("id", { count: "exact", head: true }).eq("status", "open")
       : Promise.resolve({ count: 0, error: null }),
   ]);
 
@@ -111,6 +119,9 @@ export default async function DashboardPage() {
   const missingStatements = canViewStatements ? bankRows.filter((row) => !row.statement_current) : [];
   const unmatchedCount = unmatchedResult.count ?? 0;
   const untaggedCount = untaggedResult.count ?? 0;
+  const draftCount = draftResult.count ?? 0;
+  const cashDifferenceCount = cashDifferenceResult.count ?? 0;
+  const reconciliationCount = reconciliationResult.count ?? 0;
   const dashboardError = summaryResult.error?.message ?? balancesResult.error?.message ?? null;
 
   const movementCards = [
@@ -153,8 +164,18 @@ export default async function DashboardPage() {
         ))}
       </div>
 
-      {canViewStatements ? (
-        <section className="grid gap-3 sm:grid-cols-3">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <Link href="/cash-book">
+            <Card className={draftCount ? "border-amber-400" : ""}>
+              <p className="text-sm text-[var(--muted)]">Work queue</p><p className="mt-1 font-semibold">Drafts / approvals</p><p className="mt-2 text-2xl font-semibold">{draftCount}</p><p className="mt-1 text-xs text-[var(--muted)]">Entries waiting to be posted</p>
+            </Card>
+          </Link>
+          <Link href="/cash-book">
+            <Card className={cashDifferenceCount ? "border-amber-400" : ""}>
+              <p className="text-sm text-[var(--muted)]">Work queue</p><p className="mt-1 font-semibold">Cash differences</p><p className="mt-2 text-2xl font-semibold">{cashDifferenceCount}</p><p className="mt-1 text-xs text-[var(--muted)]">Physical count needs review</p>
+            </Card>
+          </Link>
+      {canViewStatements ? <>
           <Link href="/bank-import">
             <Card className={missingStatements.length ? "border-amber-400" : ""}>
               <p className="text-sm text-[var(--muted)]">Aaj ka kaam</p>
@@ -179,8 +200,13 @@ export default async function DashboardPage() {
               <p className="mt-1 text-xs text-[var(--muted)]">Books se abhi match nahi hui</p>
             </Card>
           </Link>
-        </section>
-      ) : null}
+          <Link href="/bank-import">
+            <Card className={reconciliationCount ? "border-amber-400" : ""}>
+              <p className="text-sm text-[var(--muted)]">Work queue</p><p className="mt-1 font-semibold">BRS open</p><p className="mt-2 text-2xl font-semibold">{reconciliationCount}</p><p className="mt-1 text-xs text-[var(--muted)]">Reconciliations with a difference</p>
+            </Card>
+          </Link>
+      </> : null}
+      </section>
 
       <DashboardShortcuts
         isAdmin={auth.data.roles.includes("admin")}

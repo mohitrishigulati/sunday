@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createCashBookEntry, createCashRegisterLocation, createFourSampleCashEntries, ensureCashBookSetup } from "@/lib/actions/cash-book";
 import { createParty } from "@/lib/actions/masters";
@@ -43,56 +43,12 @@ export function CashEntryForm({
   const [extraLocations, setExtraLocations] = useState<Location[]>([]);
   const [newLocationCode, setNewLocationCode] = useState("HQ");
   const [newLocationName, setNewLocationName] = useState("Head office");
-  const setupTried = useRef("");
 
   const company = companies.find((item) => item.id === companyId);
   const cashLocations = useMemo(
     () => [...locations, ...extraLocations].filter((item) => item.company_id === companyId),
     [locations, extraLocations, companyId],
   );
-  const years = useMemo(
-    () => financialYears.filter((item) => item.company_id === companyId),
-    [financialYears, companyId],
-  );
-
-  useEffect(() => {
-    if (!companyId && companies[0]) {
-      selectCompany(companies[0].id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- first company only
-  }, [companies]);
-
-  useEffect(() => {
-    if (!companyId) return;
-    const companyLocations = locations.filter((item) => item.company_id === companyId);
-    const companyYears = financialYears.filter((item) => item.company_id === companyId);
-    if (companyLocations.length && companyYears.length) {
-      if (!locationId) setLocationId(companyLocations[0].id);
-      if (!financialYearId) {
-        const fy = indianFinancialYearForDate();
-        const match = companyYears.find(
-          (year) => year.start_date && year.end_date && year.start_date <= fy.startDate && year.end_date >= fy.startDate,
-        );
-        setFinancialYearId(match?.id ?? companyYears[0].id);
-      }
-      return;
-    }
-    if (setupTried.current === companyId) return;
-    setupTried.current = companyId;
-    startTransition(async () => {
-      setError(null);
-      const result = await ensureCashBookSetup(companyId);
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
-      setLocationId(result.data.locationId);
-      setFinancialYearId(result.data.financialYearId);
-      setSetupHint(`Cash register: ${result.data.locationLabel}. Year: ${result.data.yearCode}.`);
-      router.refresh();
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, locations, financialYears]);
   const allParties = useMemo(
     () =>
       [...partiesList]
@@ -247,7 +203,6 @@ export function CashEntryForm({
           startTransition(async () => {
             if (!companyId) return;
             setError(null);
-            setupTried.current = "";
             const result = await ensureCashBookSetup(companyId);
             if (!result.ok) {
               setError(result.error);

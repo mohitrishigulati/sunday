@@ -1,5 +1,5 @@
-import { BusinessWorkbench } from "@/components/business/business-workbench";
+import { redirect } from "next/navigation";
 
-export default async function BusinessPage() {
-  return <BusinessWorkbench />;
+export default function BusinessPage() {
+  redirect("/transactions");
 }

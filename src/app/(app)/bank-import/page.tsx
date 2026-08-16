@@ -1,4 +1,4 @@
-import { BankLineMatcher, ReconciliationForm } from "@/components/bank-import/reconciliation-actions";
+import { BankLineMatcher, CreateEntryFromStatementLine, ReconciliationForm } from "@/components/bank-import/reconciliation-actions";
 import { StatementImportForm } from "@/components/bank-import/statement-import-form";
 import { AttachmentLink } from "@/components/attachments/attachment-link";
 import { AccessDenied, DataTable, PageHeader } from "@/components/ui/primitives";
@@ -18,6 +18,7 @@ type UnmatchedBankLine = {
   debit_amount: number | string;
   credit_amount: number | string;
   balance_after: number | string | null;
+  bank_account_id: string;
   bank_accounts: { company_id: string; account_name: string } | null;
   bank_statement_imports: { imported_at: string } | null;
 };
@@ -27,7 +28,7 @@ async function fetchAllUnmatchedBankLines(supabase: Awaited<ReturnType<typeof cr
   const pageSize = 1000;
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabase.from("bank_statement_lines")
-      .select("id, import_id, statement_sequence, txn_date, value_date, description, reference, transaction_type, debit_amount, credit_amount, balance_after, bank_accounts!bank_statement_lines_bank_account_id_fkey(company_id, account_name), bank_statement_imports!bank_statement_lines_import_id_fkey(imported_at)")
+      .select("id, import_id, bank_account_id, statement_sequence, txn_date, value_date, description, reference, transaction_type, debit_amount, credit_amount, balance_after, bank_accounts!bank_statement_lines_bank_account_id_fkey(company_id, account_name), bank_statement_imports!bank_statement_lines_import_id_fkey(imported_at)")
       .eq("match_status", "unmatched")
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
@@ -51,7 +52,7 @@ export default async function BankImportPage() {
   }
 
   const supabase = await createClient();
-  const [{ data: companies }, { data: accounts }, { data: groups }, { data: banks }, { data: imports }, unmatched, { data: vouchers }, { data: reconciliations }] = await Promise.all([
+  const [{ data: companies }, { data: accounts }, { data: groups }, { data: banks }, { data: imports }, unmatched, { data: vouchers }, { data: reconciliations }, { data: years }, { data: ledgers }] = await Promise.all([
     supabase.from("companies").select("id, code, name").order("code"),
     supabase.from("bank_accounts").select("id, company_id, account_name, account_number").eq("is_active", true).is("deleted_at", null),
     supabase.from("company_groups").select("id,code,name").eq("is_active", true).order("code"),
@@ -60,6 +61,8 @@ export default async function BankImportPage() {
     fetchAllUnmatchedBankLines(supabase),
     supabase.from("vouchers").select("id, company_id, voucher_number, voucher_date").eq("status", "posted").not("voucher_number", "is", null).order("voucher_date", { ascending: false }).limit(500),
     supabase.from("bank_reconciliations").select("as_of_date, statement_closing, book_closing, difference, status, bank_accounts(account_name)").order("as_of_date", { ascending: false }).limit(100),
+    supabase.from("financial_years").select("id,company_id,code").order("start_date", { ascending: false }),
+    supabase.from("ledgers").select("id,company_id,code,name,ledger_type").eq("is_active", true).is("deleted_at", null).order("code"),
   ]);
 
   const postedVouchers = (vouchers ?? []).map((voucher) => ({ ...voucher, voucher_number: voucher.voucher_number! }));
@@ -89,7 +92,7 @@ export default async function BankImportPage() {
     <div>
       <h2 className="mb-3 text-lg font-semibold">Unmatched bank transactions</h2>
       <DataTable
-        columns={["S.No.", "Transaction date", "Value date", "Bank", "Particulars", "Ref./Cheque No.", "Transaction type", "Debit (Rs)", "Credit (Rs)", "Balance (Rs)", "Match"]}
+        columns={["S.No.", "Transaction date", "Value date", "Bank", "Particulars", "Ref./Cheque No.", "Transaction type", "Debit (Rs)", "Credit (Rs)", "Balance (Rs)", "Create entry / Match"]}
         rows={(unmatched ?? []).map((row) => {
           const bank = row.bank_accounts as unknown as { company_id: string; account_name: string } | null;
           return [
@@ -103,7 +106,7 @@ export default async function BankImportPage() {
             Number(row.debit_amount) ? formatMoney(row.debit_amount) : "—",
             Number(row.credit_amount) ? formatMoney(row.credit_amount) : "—",
             row.balance_after === null ? "—" : formatMoney(row.balance_after),
-            <BankLineMatcher key={row.id} lineId={row.id} companyId={bank?.company_id ?? ""} vouchers={postedVouchers} />,
+            <div key={row.id}><BankLineMatcher lineId={row.id} companyId={bank?.company_id ?? ""} vouchers={postedVouchers} /><CreateEntryFromStatementLine line={{ companyId: bank?.company_id ?? "", bankAccountId: row.bank_account_id, date: row.txn_date, description: row.description ?? "", reference: row.reference ?? "", debitAmount: Number(row.debit_amount), creditAmount: Number(row.credit_amount) }} years={years ?? []} ledgers={ledgers ?? []} /></div>,
           ];
         })}
       />

@@ -25,14 +25,14 @@ export default async function BankBookPage() {
   const bankRows = (postings ?? []).flatMap((posting) => {
     const account = accountByLedger.get(posting.ledger_id);
     const voucher = posting.vouchers as unknown as { narration: string | null; voucher_types: { code: string } | null } | null;
-    if (!account || !["BNK-R", "BNK-P", "BNK"].includes(voucher?.voucher_types?.code ?? "")) return [];
+    if (!account || !["BNK-R", "BNK-P", "BNK", "CONTRA"].includes(voucher?.voucher_types?.code ?? "")) return [];
     const receipt = Number(posting.debit_amount);
     const payment = Number(posting.credit_amount);
     const balance = Number(((balances.get(account.id) ?? 0) + receipt - payment).toFixed(4));
     balances.set(account.id, balance);
     return [{ posting, account, voucher, receipt, payment, balance }];
   });
-  const bankVouchers = (vouchers ?? []).filter((voucher) => ["BNK-R", "BNK-P", "BNK"].includes((voucher.voucher_types as unknown as { code: string } | null)?.code ?? ""));
+  const bankVouchers = (vouchers ?? []).filter((voucher) => ["BNK-R", "BNK-P", "BNK", "CONTRA"].includes((voucher.voucher_types as unknown as { code: string } | null)?.code ?? ""));
 
   return (
     <div className="space-y-8">

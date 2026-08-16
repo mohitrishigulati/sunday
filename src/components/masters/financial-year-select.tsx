@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { ensureAprilMarchYears } from "@/lib/actions/masters";
 import { aprilMarchYearLabel } from "@/lib/financial-year";
 import { Button, Select } from "@/components/ui/primitives";
@@ -45,7 +45,7 @@ export function FinancialYearSelect({
     }
     return [...byId.values()].sort((a, b) => (b.start_date ?? b.code).localeCompare(a.start_date ?? a.code));
   }, [years, extra, companyId]);
-  const selected = value ?? internal;
+  const selected = value ?? (merged.some((year) => year.id === internal) ? internal : "");
 
   function pick(id: string) {
     setInternal(id);
@@ -66,13 +66,6 @@ export function FinancialYearSelect({
       if (!selected && result.data.currentId) pick(result.data.currentId);
     });
   }
-
-  useEffect(() => {
-    setInternal("");
-    if (!companyId) return;
-    ensureYears();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId]);
 
   return (
     <div className="space-y-1">

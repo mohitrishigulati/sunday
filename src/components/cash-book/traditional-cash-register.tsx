@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { formatMoney } from "@/lib/format";
 
 const MONEY_SCALE = 10_000n;
@@ -40,13 +43,19 @@ function displayDate(value: string): string {
 }
 
 export function TraditionalCashRegister({ registers }: { registers: CashRegister[] }) {
+  const [locationId, setLocationId] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   if (registers.length === 0) {
     return <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6 text-sm text-[var(--muted)]">No configured cash location is available.</div>;
   }
 
-  return <div className="space-y-8">{registers.map((register) => {
-    let runningBalance = 0n;
-    const rows = register.entries.map((entry) => {
+  const visibleRegisters = locationId ? registers.filter((register) => register.id === locationId) : registers;
+  return <div className="space-y-4"><div className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 md:grid-cols-3"><label className="text-sm"><span className="mb-1 block font-medium">Cash register</span><select className="w-full rounded border px-2 py-1.5" value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">All locations</option>{registers.map((register) => <option key={register.id} value={register.id}>{register.companyCode} — {register.locationCode} — {register.locationName}</option>)}</select></label><label className="text-sm"><span className="mb-1 block font-medium">From date</span><input className="w-full rounded border px-2 py-1.5" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label><label className="text-sm"><span className="mb-1 block font-medium">To date</span><input className="w-full rounded border px-2 py-1.5" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label></div>{visibleRegisters.map((register) => {
+    const openingBalance = register.entries.filter((entry) => !fromDate || entry.voucherDate < fromDate).reduce((sum, entry) => sum + decimalUnits(entry.debitAmount) - decimalUnits(entry.creditAmount), 0n);
+    const selectedEntries = register.entries.filter((entry) => (!fromDate || entry.voucherDate >= fromDate) && (!toDate || entry.voucherDate <= toDate));
+    let runningBalance = openingBalance;
+    const rows = selectedEntries.map((entry) => {
       const receipt = decimalUnits(entry.debitAmount);
       const payment = decimalUnits(entry.creditAmount);
       runningBalance += receipt - payment;
@@ -62,7 +71,7 @@ export function TraditionalCashRegister({ registers }: { registers: CashRegister
       <div className="cash-register-heading">
         <div><p className="cash-register-kicker">CASH BOOK</p><h3>{register.locationCode} — {register.locationName}</h3><p>{register.companyCode}</p></div>
         <div className="cash-register-balances" aria-label="Cash balance summary">
-          <span>Opening <strong>{money(0n)}</strong></span>
+          <span>Opening <strong>{money(openingBalance)}</strong></span>
           <span>Receipts <strong>{money(totalReceipts)}</strong></span>
           <span>Payments <strong>{money(totalPayments)}</strong></span>
           <span>Closing <strong>{money(runningBalance)}</strong></span>

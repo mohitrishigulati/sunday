@@ -5,7 +5,7 @@ import { TRANSACTION_KINDS, type TransactionKind } from "@/lib/transaction-kinds
 
 export function TransactionTypeNav({ active }: { active?: TransactionKind }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-5">
+    <div className="grid gap-2 sm:grid-cols-4">
       {TRANSACTION_KINDS.map((item) => {
         const selected = active === item.kind;
         return (

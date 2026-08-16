@@ -38,11 +38,6 @@ export function OpeningBalanceForm({
     () => ledgers.filter((l) => l.company_id === companyId),
     [ledgers, companyId],
   );
-  const companyYears = useMemo(
-    () => financialYears.filter((y) => y.company_id === companyId),
-    [financialYears, companyId],
-  );
-
   const totalDr = lines.reduce((s, l) => s + Number(l.debitAmount || 0), 0);
   const totalCr = lines.reduce((s, l) => s + Number(l.creditAmount || 0), 0);
 

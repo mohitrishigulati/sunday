@@ -8,12 +8,11 @@ export type AppShortcut = {
 
 export const APP_SHORTCUTS: AppShortcut[] = [
   { href: "/dashboard", key: "D", label: "Dashboard", hint: "Aaj ki tasveer" },
-  { href: "/transactions", key: "T", label: "Transactions", hint: "Sale / Purchase / Receipt / Payment / Journal" },
-  { href: "/transactions/sale", key: "S", label: "Sale", hint: "Sales invoice" },
-  { href: "/transactions/purchase", key: "P", label: "Purchase", hint: "Purchase invoice" },
+  { href: "/transactions", key: "T", label: "Transactions", hint: "Receipt / Payment / Journal / Contra" },
   { href: "/transactions/receipt", key: "E", label: "Receipt", hint: "Cash / bank received" },
   { href: "/transactions/payment", key: "Y", label: "Payment", hint: "Cash / bank paid" },
   { href: "/transactions/journal", key: "J", label: "Journal Entry", hint: "Debit / Credit" },
+  { href: "/transactions/contra", key: "N", label: "Contra", hint: "Cash ↔ bank transfer" },
   { href: "/cash-book", key: "C", label: "Cash Book", hint: "Cash register" },
   { href: "/bank-book", key: "B", label: "Bank Book", hint: "Bank register" },
   { href: "/bank-import", key: "U", label: "Upload statement", hint: "PDF / Excel", permission: "bank.statements.view" },

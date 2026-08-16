@@ -39,7 +39,7 @@ export default async function CashBookPage() {
 
   const cashVouchers = (vouchers ?? []).filter((voucher) => {
     const code = (voucher.voucher_types as unknown as { code: string } | null)?.code;
-    return code === "CASH-R" || code === "CASH-P";
+    return code === "CASH-R" || code === "CASH-P" || code === "CONTRA";
   });
 
   const cashRows = (postings ?? []).flatMap((posting) => {

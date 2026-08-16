@@ -1,17 +1,5 @@
 export const TRANSACTION_KINDS = [
   {
-    kind: "sale",
-    href: "/transactions/sale",
-    label: "Sale",
-    hint: "Sales invoice / bill",
-  },
-  {
-    kind: "purchase",
-    href: "/transactions/purchase",
-    label: "Purchase",
-    hint: "Purchase invoice / bill",
-  },
-  {
     kind: "receipt",
     href: "/transactions/receipt",
     label: "Receipt",
@@ -28,6 +16,12 @@ export const TRANSACTION_KINDS = [
     href: "/transactions/journal",
     label: "Journal Entry",
     hint: "Debit / Credit",
+  },
+  {
+    kind: "contra",
+    href: "/transactions/contra",
+    label: "Contra",
+    hint: "Cash ↔ bank transfer",
   },
 ] as const;
 

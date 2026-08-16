@@ -25,11 +25,10 @@ const GROUPS = [
     label: "Transactions",
     items: [
       { href: "/transactions", label: "Voucher types" },
-      { href: "/transactions/sale", label: "Sale" },
-      { href: "/transactions/purchase", label: "Purchase" },
       { href: "/transactions/receipt", label: "Receipt" },
       { href: "/transactions/payment", label: "Payment" },
       { href: "/transactions/journal", label: "Journal Entry" },
+      { href: "/transactions/contra", label: "Contra (Cash ↔ Bank)" },
     ],
   },
   {
