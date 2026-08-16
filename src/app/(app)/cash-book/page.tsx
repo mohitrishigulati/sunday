@@ -23,7 +23,7 @@ export default async function CashBookPage() {
     { data: verifications },
   ] = await Promise.all([
     supabase.from("companies").select("id, group_id, code, name").order("code"),
-    supabase.from("locations").select("id, company_id, code, name, cash_ledger_id").eq("is_cash_location", true).not("cash_ledger_id", "is", null).order("code"),
+    supabase.from("locations").select("id, company_id, code, name, cash_ledger_id").not("cash_ledger_id", "is", null).order("code"),
     supabase.from("financial_years").select("id, company_id, code, start_date, end_date").order("start_date", { ascending: false }),
     supabase.from("ledgers").select("id, company_id, party_id, code, name, ledger_type").is("deleted_at", null).eq("is_active", true).order("code"),
     supabase.from("parties").select("id, group_id, code, name, party_kinds").is("deleted_at", null).order("name"),

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createCashBookEntry, createFourSampleCashEntries } from "@/lib/actions/cash-book";
+import { createCashBookEntry, createFourSampleCashEntries, ensureCashBookSetup } from "@/lib/actions/cash-book";
 import { createParty } from "@/lib/actions/masters";
 import { indianFinancialYearForDate } from "@/lib/financial-year";
 import { Button, Input, Select } from "@/components/ui/primitives";
@@ -38,6 +38,9 @@ export function CashEntryForm({
   const [success, setSuccess] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  const [setupHint, setSetupHint] = useState<string | null>(null);
+  const setupTried = useRef("");
+
   const company = companies.find((item) => item.id === companyId);
   const cashLocations = useMemo(
     () => locations.filter((item) => item.company_id === companyId),
@@ -47,6 +50,45 @@ export function CashEntryForm({
     () => financialYears.filter((item) => item.company_id === companyId),
     [financialYears, companyId],
   );
+
+  useEffect(() => {
+    if (!companyId && companies[0]) {
+      selectCompany(companies[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- first company only
+  }, [companies]);
+
+  useEffect(() => {
+    if (!companyId) return;
+    const companyLocations = locations.filter((item) => item.company_id === companyId);
+    const companyYears = financialYears.filter((item) => item.company_id === companyId);
+    if (companyLocations.length && companyYears.length) {
+      if (!locationId) setLocationId(companyLocations[0].id);
+      if (!financialYearId) {
+        const fy = indianFinancialYearForDate();
+        const match = companyYears.find(
+          (year) => year.start_date && year.end_date && year.start_date <= fy.startDate && year.end_date >= fy.startDate,
+        );
+        setFinancialYearId(match?.id ?? companyYears[0].id);
+      }
+      return;
+    }
+    if (setupTried.current === companyId) return;
+    setupTried.current = companyId;
+    startTransition(async () => {
+      setError(null);
+      const result = await ensureCashBookSetup(companyId);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setLocationId(result.data.locationId);
+      setFinancialYearId(result.data.financialYearId);
+      setSetupHint(`Cash register: ${result.data.locationLabel}. Year: ${result.data.yearCode}.`);
+      router.refresh();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, locations, financialYears]);
   const allParties = useMemo(
     () =>
       [...partiesList]
@@ -66,13 +108,6 @@ export function CashEntryForm({
       ),
     [ledgers, companyId],
   );
-
-  useEffect(() => {
-    if (!companyId && companies[0]) {
-      selectCompany(companies[0].id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- first company only
-  }, [companies]);
 
   function selectCompany(nextId: string) {
     setCompanyId(nextId);
@@ -128,7 +163,7 @@ export function CashEntryForm({
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 md:grid-cols-4">
+      <div className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 md:grid-cols-2">
         <Select label="Company" required value={companyId} onChange={(event) => selectCompany(event.target.value)}>
           <option value="">Select</option>
           {companies.map((item) => (
@@ -137,28 +172,78 @@ export function CashEntryForm({
             </option>
           ))}
         </Select>
-        <Select label="Cash register / location" required value={locationId} onChange={(event) => setLocationId(event.target.value)}>
-          <option value="">Select</option>
-          {cashLocations.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.code} — {item.name}
-            </option>
-          ))}
-        </Select>
-        <Select label="Financial year" required value={financialYearId} onChange={(event) => setFinancialYearId(event.target.value)}>
-          <option value="">Select</option>
-          {years.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.code}
-            </option>
-          ))}
-        </Select>
         <Input label="Date" type="date" required value={voucherDate} onChange={(event) => setVoucherDate(event.target.value)} />
+        <div>
+          <p className="mb-1 text-sm font-medium">Cash register / location</p>
+          <div className="max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-white">
+            {cashLocations.length === 0 ? (
+              <p className="px-3 py-2 text-sm text-[var(--muted)]">Abhi list khali hai — Create cash register dabao, ya wait karo.</p>
+            ) : (
+              cashLocations.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`block w-full border-b border-[var(--border)] px-3 py-2 text-left text-sm last:border-b-0 ${
+                    locationId === item.id ? "bg-[var(--accent)] text-white" : "hover:bg-[var(--surface-2)]"
+                  }`}
+                  onClick={() => setLocationId(item.id)}
+                >
+                  {item.code} — {item.name}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-medium">Financial year</p>
+          <div className="max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-white">
+            {years.length === 0 ? (
+              <p className="px-3 py-2 text-sm text-[var(--muted)]">Abhi year nahi hai — Create cash register dabao.</p>
+            ) : (
+              years.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`block w-full border-b border-[var(--border)] px-3 py-2 text-left text-sm last:border-b-0 ${
+                    financialYearId === item.id ? "bg-[var(--accent)] text-white" : "hover:bg-[var(--surface-2)]"
+                  }`}
+                  onClick={() => setFinancialYearId(item.id)}
+                >
+                  {item.code}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
       </div>
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={pending || !companyId}
+        onClick={() =>
+          startTransition(async () => {
+            if (!companyId) return;
+            setError(null);
+            setupTried.current = "";
+            const result = await ensureCashBookSetup(companyId);
+            if (!result.ok) {
+              setError(result.error);
+              return;
+            }
+            setLocationId(result.data.locationId);
+            setFinancialYearId(result.data.financialYearId);
+            setSetupHint(`Cash register: ${result.data.locationLabel}. Year: ${result.data.yearCode}.`);
+            router.refresh();
+          })
+        }
+      >
+        Create cash register & year for this company
+      </Button>
+      {setupHint ? <p className="text-sm text-[var(--accent)]">{setupHint}</p> : null}
       {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
       {success ? <p className="text-sm text-[var(--accent)]">{success}</p> : null}
       <ol className="list-decimal space-y-1 rounded-lg border border-[var(--border)] bg-white px-5 py-3 text-sm text-[var(--ink)]">
-        <li>Upar company / cash register / year / date confirm karo (auto-select ho jata hai).</li>
+        <li>Company choose karo. Agar location/year khali ho to <strong>Create cash register & year</strong> dabao, phir list ki line pe click karo.</li>
         <li>Neeche party ki line pe <strong>click</strong> karo — dropdown nahi, list se choose karo.</li>
         <li>Amount bharo.</li>
         <li>Left = cash aaya (Save received from). Right = cash gaya (Save paid to).</li>

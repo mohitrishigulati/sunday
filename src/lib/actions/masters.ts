@@ -95,6 +95,16 @@ export async function createCompany(
     name: "Cash-in-hand",
     ledger_type: "cash",
     is_intercompany: false,
+  }).select("id").single().then(async ({ data: cashLedger }) => {
+    if (!cashLedger) return;
+    await supabase.from("locations").insert({
+      company_id: data.id,
+      code: "HQ",
+      name: "Head office",
+      location_type: "cash_counter",
+      is_cash_location: true,
+      cash_ledger_id: cashLedger.id,
+    });
   });
 
   await ensureIndianFinancialYear(data.id, new Date().toISOString().slice(0, 10));

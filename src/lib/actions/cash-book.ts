@@ -6,6 +6,7 @@ import { assertCompanyAccess, assertLocationAccess, assertPermission, requireUse
 import { createClient } from "@/lib/supabase/server";
 import { fail, ok, type ActionResult } from "@/lib/types";
 import { defaultPartyHeadCode, insertBusyAccountGroups } from "@/lib/busy-account-groups";
+import { ensureIndianFinancialYear } from "@/lib/actions/masters";
 
 type Db = Awaited<ReturnType<typeof createClient>>;
 
@@ -105,6 +106,120 @@ async function ensurePartyLedger(supabase: Db, companyId: string, partyId: strin
     }
   }
   return null;
+}
+
+export async function ensureCashBookSetup(companyId: string): Promise<
+  ActionResult<{
+    locationId: string;
+    financialYearId: string;
+    locationLabel: string;
+    yearCode: string;
+  }>
+> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+  if (!z.string().uuid().safeParse(companyId).success) return fail("Select a company");
+  const access = await assertCompanyAccess(companyId, "write");
+  if (!access.ok) return access;
+
+  const supabase = await createClient();
+  await insertBusyAccountGroups(supabase as never, companyId);
+  await supabase.rpc("seed_company_voucher_types", { p_company_id: companyId });
+
+  const year = await ensureIndianFinancialYear(companyId, new Date().toISOString().slice(0, 10));
+  if (!year.ok) return year;
+
+  const { data: cashLocations } = await supabase
+    .from("locations")
+    .select("id, code, name, cash_ledger_id, is_cash_location")
+    .eq("company_id", companyId)
+    .eq("is_cash_location", true)
+    .not("cash_ledger_id", "is", null)
+    .limit(1);
+  let location = cashLocations?.[0] ?? null;
+
+  if (!location) {
+    await insertBusyAccountGroups(supabase as never, companyId);
+    const { data: cashGroup } = await supabase
+      .from("account_groups")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("code", "BS-CASH")
+      .maybeSingle();
+    let { data: cashLedger } = await supabase
+      .from("ledgers")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("ledger_type", "cash")
+      .eq("is_active", true)
+      .is("deleted_at", null)
+      .limit(1)
+      .maybeSingle();
+    if (!cashLedger) {
+      const created = await supabase
+        .from("ledgers")
+        .insert({
+          company_id: companyId,
+          account_group_id: cashGroup?.id ?? null,
+          code: "CASH-HQ",
+          name: "Cash-in-hand",
+          ledger_type: "cash",
+          is_intercompany: false,
+        })
+        .select("id")
+        .single();
+      if (created.error || !created.data) {
+        return fail(created.error?.message ?? "Cash ledger bana nahi. Location Master se cash register banao.");
+      }
+      cashLedger = created.data;
+    }
+
+    const { data: anyLocation } = await supabase
+      .from("locations")
+      .select("id, code, name")
+      .eq("company_id", companyId)
+      .limit(1)
+      .maybeSingle();
+    if (anyLocation) {
+      const updated = await supabase
+        .from("locations")
+        .update({ is_cash_location: true, cash_ledger_id: cashLedger.id })
+        .eq("id", anyLocation.id)
+        .select("id, code, name")
+        .single();
+      if (updated.error || !updated.data) {
+        return fail(updated.error?.message ?? "Cash location update nahi hua");
+      }
+      location = { ...updated.data, cash_ledger_id: cashLedger.id, is_cash_location: true };
+    } else {
+      const createdLoc = await supabase
+        .from("locations")
+        .insert({
+          company_id: companyId,
+          code: "HQ",
+          name: "Head office",
+          location_type: "cash_counter",
+          is_cash_location: true,
+          cash_ledger_id: cashLedger.id,
+        })
+        .select("id, code, name")
+        .single();
+      if (createdLoc.error || !createdLoc.data) {
+        return fail(createdLoc.error?.message ?? "Cash register bana nahi. Location Master mein HQ cash counter banao.");
+      }
+      location = { ...createdLoc.data, cash_ledger_id: cashLedger.id, is_cash_location: true };
+    }
+  }
+
+  revalidatePath("/cash-book");
+  revalidatePath("/transactions/receipt");
+  revalidatePath("/transactions/payment");
+  return ok({
+    locationId: location.id,
+    financialYearId: year.data.id,
+    locationLabel: `${location.code} — ${location.name}`,
+    yearCode: year.data.code,
+  });
 }
 
 export async function createCashBookEntry(
