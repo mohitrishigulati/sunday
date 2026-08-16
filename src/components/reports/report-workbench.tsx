@@ -5,6 +5,7 @@ import { Button, DataTable, Input, Select } from "@/components/ui/primitives";
 import { formatMoney } from "@/lib/format";
 import { BankStatementPartySelector } from "@/components/reports/bank-statement-party-selector";
 import { indianFinancialYearForDate } from "@/lib/financial-year";
+import { validateStatementBalances } from "@/lib/bank-statement-validation";
 
 type Company = { id: string; group_id: string; code: string; name: string };
 type PartyOption = {
