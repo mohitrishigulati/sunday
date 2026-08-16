@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createCashBookEntry } from "@/lib/actions/cash-book";
+import { createCashBookEntry, createFourSampleCashEntries } from "@/lib/actions/cash-book";
 import { createParty } from "@/lib/actions/masters";
 import { indianFinancialYearForDate } from "@/lib/financial-year";
 import { Button, Input, Select } from "@/components/ui/primitives";
@@ -147,6 +147,34 @@ export function CashEntryForm({
         </Select>
         <Input label="Date" type="date" required value={voucherDate} onChange={(event) => setVoucherDate(event.target.value)} />
       </div>
+      {ready ? (
+        <div>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={pending}
+            onClick={() =>
+              startTransition(async () => {
+                setError(null);
+                setSuccess(null);
+                const result = await createFourSampleCashEntries({
+                  companyId,
+                  locationId,
+                  financialYearId,
+                  voucherDate,
+                });
+                if (!result.ok) {
+                  setError(result.error);
+                  return;
+                }
+                setSuccess("4 cash entries saved as draft (2 received, 2 paid). Approve/post queue mein dekho.");
+              })
+            }
+          >
+            4 sample entries daalo
+          </Button>
+        </div>
+      ) : null}
 
       <div className="cash-register-section">
         <div className="cash-register-heading">

@@ -142,7 +142,69 @@ export async function createCashBookEntry(
   }
 
   revalidatePath("/cash-book");
+  revalidatePath("/transactions/receipt");
+  revalidatePath("/transactions/payment");
   return ok({ id: voucher.id });
+}
+
+export async function createFourSampleCashEntries(input: {
+  companyId: string;
+  locationId: string;
+  financialYearId: string;
+  voucherDate: string;
+}): Promise<ActionResult<{ count: number }>> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
+  const parsed = z
+    .object({
+      companyId: z.string().uuid(),
+      locationId: z.string().uuid(),
+      financialYearId: z.string().uuid(),
+      voucherDate: z.string().min(8),
+    })
+    .safeParse(input);
+  if (!parsed.success) return fail("Pehle company, cash register, year aur date select karo.");
+
+  const supabase = await createClient();
+  const { data: ledgers } = await supabase
+    .from("ledgers")
+    .select("id, party_id, ledger_type")
+    .eq("company_id", parsed.data.companyId)
+    .eq("is_active", true)
+    .is("deleted_at", null)
+    .neq("ledger_type", "cash")
+    .limit(8);
+  const counterparts = (ledgers ?? []).filter((ledger) => ledger.ledger_type !== "cash");
+  if (!counterparts.length) {
+    return fail("Is company mein party/ledger nahi hai. Pehle Party Master ya Ledger banao.");
+  }
+
+  const pick = (index: number) => counterparts[index % counterparts.length];
+  const samples = [
+    { entryKind: "receipt" as const, amount: 10000, narration: "Cash received — sample 1", party: pick(0) },
+    { entryKind: "receipt" as const, amount: 7500, narration: "Cash received — sample 2", party: pick(1) },
+    { entryKind: "payment" as const, amount: 2500, narration: "Cash paid — sample 3", party: pick(2) },
+    { entryKind: "payment" as const, amount: 4000, narration: "Cash paid — sample 4", party: pick(3) },
+  ];
+
+  for (const sample of samples) {
+    const result = await createCashBookEntry({
+      companyId: parsed.data.companyId,
+      locationId: parsed.data.locationId,
+      financialYearId: parsed.data.financialYearId,
+      voucherDate: parsed.data.voucherDate,
+      entryKind: sample.entryKind,
+      partyId: sample.party.party_id ?? undefined,
+      counterpartyLedgerId: sample.party.id,
+      amount: sample.amount,
+      narration: sample.narration,
+    });
+    if (!result.ok) return result;
+  }
+
+  revalidatePath("/cash-book");
+  return ok({ count: 4 });
 }
 
 const cashVerificationSchema = z.object({
