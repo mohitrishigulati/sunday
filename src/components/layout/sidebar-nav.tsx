@@ -25,6 +25,7 @@ const GROUPS = [
     label: "Daily work",
     items: [
       { href: "/dashboard", label: "Dashboard" },
+      { href: "/help", label: "Help" },
       { href: "/cash-book", label: "Cash Entry / Cash Book" },
       { href: "/bank-book", label: "Bank Entry / Bank Book" },
       { href: "/bank-import", label: "Upload Bank Statement", permission: "bank.statements.view" },

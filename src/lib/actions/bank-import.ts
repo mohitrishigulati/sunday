@@ -6,6 +6,7 @@ import { assertCompanyAccess, assertPermission, requireUser } from "@/lib/auth/g
 import { createClient } from "@/lib/supabase/server";
 import { fail, ok, type ActionResult } from "@/lib/types";
 import { statementBalanceErrorMessage, validateStatementBalances } from "@/lib/bank-statement-validation";
+import { ensureIndianFinancialYearsForRange } from "@/lib/actions/masters";
 
 const rowSchema = z.object({ txnDate: z.string().date(), valueDate: z.string().date().optional(), description: z.string().max(1000).optional(), reference: z.string().max(200).optional(), transactionType: z.string().trim().max(100).optional(), debitAmount: z.number().nonnegative(), creditAmount: z.number().nonnegative(), balanceAfter: z.number().optional() }).refine((row) => (row.debitAmount > 0) !== (row.creditAmount > 0), "Each transaction must be debit or credit");
 const attachmentSchema = z.object({ storagePath: z.string().min(1).max(1000), fileName: z.string().min(1).max(255), mimeType: z.string().max(255).optional(), fileHash: z.string().length(64) });
@@ -54,6 +55,16 @@ export async function importBankStatement(input: z.infer<typeof importSchema>): 
   }
   const { data: statement, error } = await supabase.from("bank_statement_imports").insert({ company_id: parsed.data.companyId, bank_account_id: parsed.data.bankAccountId, source_format: parsed.data.sourceFormat, parser_key: "generic-column-map-v1", file_hash: fileHash, file_name: parsed.data.fileName, statement_from: parsed.data.rows.map((row) => row.txnDate).sort()[0], statement_to: parsed.data.rows.map((row) => row.txnDate).sort().at(-1), opening_balance: balanceValidation.detectedOpening ?? parsed.data.openingBalance ?? null, closing_balance: parsed.data.closingBalance, calculated_closing: calculatedClosing ?? null, balance_mismatch: mismatch, imported_by: auth.data.userId, attachment_id: attachmentId }).select("id").single();
   if (error || !statement) { if (attachmentId) await supabase.from("attachments").delete().eq("id", attachmentId); return fail(error?.message ?? "Could not create statement import"); }
+  const statementFrom = parsed.data.rows.map((row) => row.txnDate).sort()[0];
+  const statementTo = parsed.data.rows.map((row) => row.txnDate).sort().at(-1);
+  if (statementFrom && statementTo) {
+    const years = await ensureIndianFinancialYearsForRange(parsed.data.companyId, statementFrom, statementTo);
+    if (!years.ok) {
+      await supabase.from("bank_statement_imports").delete().eq("id", statement.id);
+      if (attachmentId) await supabase.from("attachments").delete().eq("id", attachmentId);
+      return years;
+    }
+  }
   const lineRows = await Promise.all(parsed.data.rows.map(async (row, index) => ({ import_id: statement.id, bank_account_id: parsed.data.bankAccountId, statement_sequence: index + 1, txn_date: row.txnDate, value_date: row.valueDate ?? null, description: row.description ?? null, reference: row.reference ?? null, transaction_type: row.transactionType || (row.debitAmount > 0 ? "Debit" : "Credit"), debit_amount: row.debitAmount, credit_amount: row.creditAmount, balance_after: row.balanceAfter ?? null, raw_payload: { ...row, statementSequence: index + 1 }, fingerprint: await canonicalLineFingerprint(parsed.data.bankAccountId, row) })));
   // Preserve every raw row. Canonical collisions are retained and routed to
   // the database duplicate-exception queue instead of being silently dropped.

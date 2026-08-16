@@ -9,6 +9,7 @@ import {
 } from "@/lib/auth/guards";
 import { createClient } from "@/lib/supabase/server";
 import { fail, ok, type ActionResult } from "@/lib/types";
+import { indianFinancialYearForDate, indianFinancialYearsCovering } from "@/lib/financial-year";
 
 const companySchema = z.object({
   groupId: z.string().uuid(),
@@ -67,7 +68,10 @@ export async function createCompany(
     can_manage: true,
   });
 
+  await ensureIndianFinancialYear(data.id, new Date().toISOString().slice(0, 10));
+
   revalidatePath("/masters/companies");
+  revalidatePath("/masters/financial-years");
   revalidatePath("/dashboard");
   revalidatePath("/bank-import");
   revalidatePath("/bank-book");
@@ -499,6 +503,70 @@ const fySchema = z.object({
   startDate: z.string(),
   endDate: z.string(),
 });
+
+export async function ensureIndianFinancialYear(
+  companyId: string,
+  onDate: string,
+): Promise<ActionResult<{ id: string; created: boolean; code: string }>> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+  const access = await assertCompanyAccess(companyId, "write");
+  if (!access.ok) return access;
+
+  const fy = indianFinancialYearForDate(onDate);
+  const supabase = await createClient();
+  const { data: existing } = await supabase
+    .from("financial_years")
+    .select("id, code")
+    .eq("company_id", companyId)
+    .eq("code", fy.code)
+    .maybeSingle();
+  if (existing)
+    return ok({ id: existing.id, created: false, code: existing.code });
+
+  const { data, error } = await supabase
+    .from("financial_years")
+    .insert({
+      company_id: companyId,
+      code: fy.code,
+      start_date: fy.startDate,
+      end_date: fy.endDate,
+    })
+    .select("id")
+    .single();
+  if (error?.code === "23505") {
+    const { data: raced } = await supabase
+      .from("financial_years")
+      .select("id, code")
+      .eq("company_id", companyId)
+      .eq("code", fy.code)
+      .maybeSingle();
+    if (raced) return ok({ id: raced.id, created: false, code: raced.code });
+  }
+  if (error || !data) return fail(error?.message ?? "Could not create financial year");
+
+  await supabase.rpc("create_monthly_periods", {
+    p_financial_year_id: data.id,
+  });
+  revalidatePath("/masters/financial-years");
+  revalidatePath("/reports");
+  return ok({ id: data.id, created: true, code: fy.code });
+}
+
+export async function ensureIndianFinancialYearsForRange(
+  companyId: string,
+  fromDate: string,
+  toDate: string,
+): Promise<ActionResult<{ codes: string[] }>> {
+  const years = indianFinancialYearsCovering(fromDate, toDate);
+  const codes: string[] = [];
+  for (const year of years) {
+    const result = await ensureIndianFinancialYear(companyId, year.startDate);
+    if (!result.ok) return result;
+    codes.push(result.data.code);
+  }
+  return ok({ codes });
+}
 
 export async function createFinancialYear(
   input: z.infer<typeof fySchema>,

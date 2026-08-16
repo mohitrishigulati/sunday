@@ -89,10 +89,11 @@ export default async function BankImportPage() {
     <div>
       <h2 className="mb-3 text-lg font-semibold">Unmatched bank transactions</h2>
       <DataTable
-        columns={["Transaction date", "Value date", "Bank", "Particulars", "Ref./Cheque No.", "Transaction type", "Debit (Rs)", "Credit (Rs)", "Balance (Rs)", "Match"]}
+        columns={["S.No.", "Transaction date", "Value date", "Bank", "Particulars", "Ref./Cheque No.", "Transaction type", "Debit (Rs)", "Credit (Rs)", "Balance (Rs)", "Match"]}
         rows={(unmatched ?? []).map((row) => {
           const bank = row.bank_accounts as unknown as { company_id: string; account_name: string } | null;
           return [
+            row.statement_sequence,
             row.txn_date,
             row.value_date ?? "—",
             bank?.account_name ?? "—",

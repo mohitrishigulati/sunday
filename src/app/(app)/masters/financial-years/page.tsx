@@ -16,7 +16,7 @@ export default async function FinancialYearsPage() {
     <div className="space-y-8">
       <PageHeader
         title="Financial years"
-        description="Creates monthly accounting periods. Locked periods block voucher create/edit/post."
+        description="Indian financial year is 1 April to 31 March. It is created automatically for new companies and when a bank statement is imported."
       />
       <FinancialYearForm companies={companies ?? []} />
       <DataTable

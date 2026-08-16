@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Button, DataTable, Input, Select } from "@/components/ui/primitives";
 import { formatMoney } from "@/lib/format";
 import { BankStatementPartySelector } from "@/components/reports/bank-statement-party-selector";
-import { validateStatementBalances } from "@/lib/bank-statement-validation";
+import { indianFinancialYearForDate } from "@/lib/financial-year";
 
 type Company = { id: string; group_id: string; code: string; name: string };
 type PartyOption = {
@@ -21,7 +21,13 @@ type GroupBankAccount = {
   account_number: string;
   companies: { group_id: string; code: string; name: string } | null;
 };
-type FinancialYear = { id: string; company_id: string; code: string };
+type FinancialYear = {
+  id: string;
+  company_id: string;
+  code: string;
+  start_date?: string;
+  end_date?: string;
+};
 type ClosingStock = {
   company_id: string;
   financial_year_id: string;
@@ -619,6 +625,7 @@ export function ReportWorkbench({
           dense
           stickyHeader
           columns={[
+            "S.No.",
             "Transaction date",
             "Value date",
             "Bank",
@@ -650,6 +657,7 @@ export function ReportWorkbench({
                 accountNumber: bank.account_number,
               }));
             return [
+              line.statement_sequence,
               line.txn_date,
               line.value_date ?? "—",
               line.bank_accounts?.account_name ?? "—",
@@ -1341,10 +1349,22 @@ export function ReportWorkbench({
           label="Company"
           value={companyId}
           onChange={(event) => {
-            setCompanyId(event.target.value);
-            setFinancialYearId("");
+            const nextCompany = event.target.value;
+            setCompanyId(nextCompany);
             setPartyId("");
             setBankAccountId("");
+            const fy = indianFinancialYearForDate();
+            const match = financialYears.find(
+              (year) =>
+                year.company_id === nextCompany &&
+                year.start_date &&
+                year.end_date &&
+                year.start_date <= fy.startDate &&
+                year.end_date >= fy.startDate,
+            );
+            setFinancialYearId(match?.id ?? "");
+            setFromDate(match?.start_date ?? fy.startDate);
+            setToDate(match?.end_date ?? fy.endDate);
           }}
         >
           <option value="">All accessible companies</option>
@@ -1358,8 +1378,14 @@ export function ReportWorkbench({
           label="Financial year"
           value={financialYearId}
           onChange={(event) => {
-            setFinancialYearId(event.target.value);
+            const nextYearId = event.target.value;
+            setFinancialYearId(nextYearId);
             setPartyId("");
+            const year = years.find((item) => item.id === nextYearId);
+            if (year?.start_date && year.end_date) {
+              setFromDate(year.start_date);
+              setToDate(year.end_date);
+            }
           }}
           disabled={!companyId}
         >

@@ -73,7 +73,7 @@ export default async function ReportsPage() {
   const supabase = await createClient();
   const [{ data: companies }, { data: financialYears }, postings, { data: closingStocks }, documents, documentLines, salaries, bankStatementLines, { data: parties }, { data: groupBankAccounts }] = await Promise.all([
     supabase.from("companies").select("id, group_id, code, name").order("code"),
-    supabase.from("financial_years").select("id, company_id, code").order("start_date", { ascending: false }),
+    supabase.from("financial_years").select("id, company_id, code, start_date, end_date").order("start_date", { ascending: false }),
     fetchAllLedgerPostings(supabase),
     supabase.from("closing_stock_entries").select("company_id,financial_year_id,as_of_date,amount,status").eq("status", "approved").order("as_of_date", { ascending: false }),
     fetchAllBusinessDocuments(supabase),

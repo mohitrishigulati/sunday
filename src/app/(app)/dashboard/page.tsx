@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DashboardShortcuts } from "@/components/dashboard/dashboard-shortcuts";
 import { StatementImportForm } from "@/components/bank-import/statement-import-form";
 import { AccessDenied, Card, DataTable, PageHeader } from "@/components/ui/primitives";
 import { formatMoney } from "@/lib/format";
@@ -66,19 +67,9 @@ export default async function DashboardPage() {
   if (!auth.ok) return <AccessDenied message="Sign in to continue." />;
   const isEntryOnly = !auth.data.roles.includes("admin") && !auth.data.permissions["reports.company"];
   if (isEntryOnly) {
-    const entryLinks = [
-      ["Cash entry", "/cash-book", "Cash receipts and cash payments"],
-      ["Bank entry", "/bank-book", "Bank receipts and bank payments"],
-      ["Journal entry", "/journals", "Balanced debit and credit voucher"],
-      ["Sales & purchase", "/business", "Customer and supplier documents"],
-      ["Inter-company transfer", "/intercompany", "Linked transfer between group companies"],
-      ["Salary entry", "/payroll", "Employee salary register entry"],
-    ];
     return <div className="space-y-6">
-      <PageHeader title="Entry workspace" description="You can prepare entries for assigned companies. Financial reports, statement data and downloads are restricted." />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {entryLinks.map(([label, href, description]) => <Link key={href} href={href}><Card className="h-full transition hover:border-[var(--accent)]"><h2 className="font-semibold">{label}</h2><p className="mt-2 text-sm text-[var(--muted)]">{description}</p></Card></Link>)}
-      </div>
+      <PageHeader title="Aaj ka kaam" description="Aap entries bana sakte ho. Reports restricted hain." actions={<Link href="/help" className="text-sm font-medium text-[var(--accent)] hover:underline">Help</Link>} />
+      <DashboardShortcuts isAdmin={false} permissions={auth.data.permissions} />
     </div>;
   }
   const supabase = await createClient();
@@ -92,6 +83,8 @@ export default async function DashboardPage() {
     { data: bankAccounts },
     { data: companyGroups },
     { data: banks },
+    unmatchedResult,
+    untaggedResult,
   ] = await Promise.all([
     supabase.rpc("dashboard_daily_summary", { p_as_of: today }),
     supabase.rpc("dashboard_daily_balances", { p_as_of: today }),
@@ -99,6 +92,12 @@ export default async function DashboardPage() {
     supabase.from("bank_accounts").select("id,company_id,account_name,account_number").eq("is_active", true).is("deleted_at", null).order("account_name"),
     supabase.from("company_groups").select("id,code,name").eq("is_active", true).order("code"),
     supabase.from("banks").select("id,code,name").order("code"),
+    canViewStatements
+      ? supabase.from("bank_statement_lines").select("id", { count: "exact", head: true }).eq("match_status", "unmatched")
+      : Promise.resolve({ count: 0, error: null }),
+    canViewStatements
+      ? supabase.from("bank_statement_lines").select("id", { count: "exact", head: true }).eq("match_status", "unmatched").is("suggested_party_id", null).is("counterparty_bank_account_id", null)
+      : Promise.resolve({ count: 0, error: null }),
   ]);
 
   const summary = (summaryResult.data?.[0] ?? null) as DailySummary | null;
@@ -110,24 +109,27 @@ export default async function DashboardPage() {
     .filter((row) => row.balance_kind === "bank")
     .sort((a, b) => `${a.company_code}-${a.entity_name}`.localeCompare(`${b.company_code}-${b.entity_name}`));
   const missingStatements = canViewStatements ? bankRows.filter((row) => !row.statement_current) : [];
+  const unmatchedCount = unmatchedResult.count ?? 0;
+  const untaggedCount = untaggedResult.count ?? 0;
   const dashboardError = summaryResult.error?.message ?? balancesResult.error?.message ?? null;
 
   const movementCards = [
-    { label: "Total opening — Cash + Bank", value: summary?.total_opening ?? 0 },
-    { label: "Total closing — Cash + Bank", value: summary?.total_closing ?? 0 },
-    { label: "Cash opening", value: summary?.cash_opening ?? 0 },
-    { label: "Cash closing", value: summary?.cash_closing ?? 0 },
-    { label: "Bank book opening", value: summary?.bank_opening ?? 0 },
-    { label: "Bank book closing", value: summary?.bank_closing ?? 0 },
-    { label: "Received today", value: summary?.total_receipts ?? 0 },
-    { label: "Paid today", value: summary?.total_payments ?? 0 },
+    { label: "Cash in hand", hint: "Aaj cash kitna hai", value: summary?.cash_closing ?? 0 },
+    { label: "Bank balance", hint: "Books ke hisaab se bank", value: summary?.bank_closing ?? 0 },
+    { label: "Received today", hint: "Aaj paise aaye", value: summary?.total_receipts ?? 0 },
+    { label: "Paid today", hint: "Aaj paise gaye", value: summary?.total_payments ?? 0 },
   ];
 
   return (
     <div className="space-y-8">
       <PageHeader
-        title="Daily financial movement"
-        description={`${displayDate(today)} — posted books only. Closing is the current balance after today's posted entries.`}
+        title="Aaj ki tasveer"
+        description={`${displayDate(today)} — sirf posted entries. Badi numbers = abhi kitna cash aur bank hai.`}
+        actions={
+          <Link href="/help" className="rounded-md bg-[var(--accent)] px-3.5 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)]">
+            Help
+          </Link>
+        }
       />
 
       {dashboardError ? (
@@ -142,7 +144,8 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {movementCards.map((item) => (
           <Card key={item.label}>
-            <p className="text-sm text-[var(--muted)]">{item.label}</p>
+            <p className="text-sm text-[var(--muted)]">{item.hint}</p>
+            <p className="mt-1 text-sm font-medium">{item.label}</p>
             <p className="mt-2 font-[family-name:var(--font-display)] text-3xl">
               {formatMoney(item.value)}
             </p>
@@ -150,124 +153,109 @@ export default async function DashboardPage() {
         ))}
       </div>
 
-      {canViewStatements && bankRows.some((row) => row.statement_closing !== null) ? (
-        <section className="space-y-3">
-          <div>
-            <h2 className="text-xl font-semibold">Latest uploaded statement opening & closing</h2>
-            <p className="text-sm text-[var(--muted)]">
-              These are bank-statement balances. Bank book balances remain separately visible below for reconciliation.
-            </p>
-          </div>
-          <DataTable
-            columns={["Company", "Bank account", "Statement opening", "Statement closing", "Statement through", "Book difference"]}
-            rows={bankRows
-              .filter((row) => row.statement_closing !== null)
-              .map((row) => [
-                row.company_code,
-                `${row.entity_name} ••••${row.entity_code}`,
-                row.statement_opening === null ? "—" : formatMoney(row.statement_opening),
-                formatMoney(row.statement_closing!),
-                row.last_statement_to ? displayDate(row.last_statement_to) : "—",
-                row.statement_book_difference === null ? "—" : formatMoney(row.statement_book_difference),
-              ])}
-          />
+      {canViewStatements ? (
+        <section className="grid gap-3 sm:grid-cols-3">
+          <Link href="/bank-import">
+            <Card className={missingStatements.length ? "border-amber-400" : ""}>
+              <p className="text-sm text-[var(--muted)]">Aaj ka kaam</p>
+              <p className="mt-1 font-semibold">Statements pending</p>
+              <p className="mt-2 text-2xl font-semibold">{missingStatements.length}</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">Accounts jinka statement aaj tak nahi aaya</p>
+            </Card>
+          </Link>
+          <Link href="/reports">
+            <Card className={untaggedCount ? "border-amber-400" : ""}>
+              <p className="text-sm text-[var(--muted)]">Aaj ka kaam</p>
+              <p className="mt-1 font-semibold">Party nahi lagi</p>
+              <p className="mt-2 text-2xl font-semibold">{untaggedCount}</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">Paid to / Received from khali hai</p>
+            </Card>
+          </Link>
+          <Link href="/bank-import">
+            <Card>
+              <p className="text-sm text-[var(--muted)]">Aaj ka kaam</p>
+              <p className="mt-1 font-semibold">Unmatched rows</p>
+              <p className="mt-2 text-2xl font-semibold">{unmatchedCount}</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">Books se abhi match nahi hui</p>
+            </Card>
+          </Link>
         </section>
       ) : null}
 
-      {canViewStatements ? <section className="space-y-3">
-        <div>
-          <h2 className="text-xl font-semibold">Upload bank statement</h2>
-          <p className="text-sm text-[var(--muted)]">
-            Select company, select bank account, then upload the PDF or Excel statement. Dashboard balances and statement status refresh after import.
+      <DashboardShortcuts
+        isAdmin={auth.data.roles.includes("admin")}
+        permissions={auth.data.permissions}
+      />
+
+      {canViewStatements && missingStatements.length ? (
+        <Card className="border-amber-500 bg-amber-50/50">
+          <h2 className="text-lg font-semibold text-amber-900">
+            {missingStatements.length} bank statement abhi pending
+          </h2>
+          <p className="mt-1 text-sm text-amber-800">
+            In accounts ka statement {displayDate(today)} tak nahi aaya. Neeche form se upload karo.
           </p>
+          <ul className="mt-3 grid gap-2 text-sm text-amber-950 md:grid-cols-2">
+            {missingStatements.map((row) => (
+              <li key={row.entity_id} className="rounded border border-amber-300 bg-white/60 px-3 py-2">
+                <strong>{row.company_code}</strong> — {row.entity_name}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+
+      {canViewStatements ? (
+        <details className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+          <summary className="cursor-pointer font-semibold">Bank statement upload</summary>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Company → Bank account → file. Import ke baad Paid to / Received from select karo.
+          </p>
+          <div className="mt-4">
+            <StatementImportForm companies={companies ?? []} accounts={bankAccounts ?? []} groups={companyGroups ?? []} banks={banks ?? []} />
+          </div>
+        </details>
+      ) : null}
+
+      <details className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+        <summary className="cursor-pointer font-semibold">Cash detail — location wise</summary>
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-[var(--muted)]">Har cash counter ka opening, aaj aaya, aaj gaya, abhi closing.</p>
+          <DataTable
+            columns={["Company", "Cash location", "Opening", "Received", "Paid", "Current closing"]}
+            rows={cashRows.map((row) => [
+              row.company_code,
+              `${row.entity_code} — ${row.entity_name}`,
+              formatMoney(row.opening_balance),
+              formatMoney(row.receipts),
+              formatMoney(row.payments),
+              formatMoney(row.closing_balance),
+            ])}
+          />
         </div>
-        <StatementImportForm companies={companies ?? []} accounts={bankAccounts ?? []} groups={companyGroups ?? []} banks={banks ?? []} />
-      </section> : null}
+      </details>
 
-      <section className="space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold">Cash balance today</h2>
-            <p className="text-sm text-[var(--muted)]">Every location has its own opening, movement and current closing.</p>
-          </div>
-          <div className="flex gap-3 text-sm">
-            <span>Opening <strong>{formatMoney(summary?.cash_opening ?? 0)}</strong></span>
-            <span>Closing <strong>{formatMoney(summary?.cash_closing ?? 0)}</strong></span>
-          </div>
+      <details className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+        <summary className="cursor-pointer font-semibold">Bank detail — account wise</summary>
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-[var(--muted)]">Book balance alag, uploaded statement alag. Difference reconcile ke liye hai.</p>
+          <DataTable
+            columns={canViewStatements ? ["Company", "Bank account", "Book opening", "Received", "Paid", "Book closing", "Statement opening", "Statement closing", "Difference", "Statement through"] : ["Company", "Bank account", "Book opening", "Received", "Paid", "Book closing"]}
+            rows={bankRows.map((row) => canViewStatements ? [
+              row.company_code,
+              `${row.entity_name} ••••${row.entity_code}`,
+              formatMoney(row.opening_balance),
+              formatMoney(row.receipts),
+              formatMoney(row.payments),
+              formatMoney(row.closing_balance),
+              row.statement_opening === null ? "—" : formatMoney(row.statement_opening),
+              row.statement_closing === null ? "—" : formatMoney(row.statement_closing),
+              row.statement_book_difference === null ? "—" : formatMoney(row.statement_book_difference),
+              row.last_statement_to ? displayDate(row.last_statement_to) : "Never uploaded",
+            ] : [row.company_code, row.entity_name, formatMoney(row.opening_balance), formatMoney(row.receipts), formatMoney(row.payments), formatMoney(row.closing_balance)])}
+          />
         </div>
-        <DataTable
-          columns={["Company", "Cash location", "Opening", "Received", "Paid", "Current closing"]}
-          rows={cashRows.map((row) => [
-            row.company_code,
-            `${row.entity_code} — ${row.entity_name}`,
-            formatMoney(row.opening_balance),
-            formatMoney(row.receipts),
-            formatMoney(row.payments),
-            formatMoney(row.closing_balance),
-          ])}
-        />
-      </section>
-
-      <section className="space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold">Bank balance today</h2>
-            <p className="text-sm text-[var(--muted)]">Book balance and latest uploaded statement balance remain separate and reconcilable.</p>
-          </div>
-          <div className="flex gap-3 text-sm">
-            <span>Opening <strong>{formatMoney(summary?.bank_opening ?? 0)}</strong></span>
-            <span>Closing <strong>{formatMoney(summary?.bank_closing ?? 0)}</strong></span>
-          </div>
-        </div>
-        <DataTable
-          columns={canViewStatements ? ["Company", "Bank account", "Book opening", "Received", "Paid", "Book closing", "Statement opening", "Statement closing", "Difference", "Statement through"] : ["Company", "Bank account", "Book opening", "Received", "Paid", "Book closing"]}
-          rows={bankRows.map((row) => canViewStatements ? [
-            row.company_code,
-            `${row.entity_name} ••••${row.entity_code}`,
-            formatMoney(row.opening_balance),
-            formatMoney(row.receipts),
-            formatMoney(row.payments),
-            formatMoney(row.closing_balance),
-            row.statement_opening === null ? "—" : formatMoney(row.statement_opening),
-            row.statement_closing === null ? "—" : formatMoney(row.statement_closing),
-            row.statement_book_difference === null ? "—" : formatMoney(row.statement_book_difference),
-            row.last_statement_to ? displayDate(row.last_statement_to) : "Never uploaded",
-          ] : [row.company_code, row.entity_name, formatMoney(row.opening_balance), formatMoney(row.receipts), formatMoney(row.payments), formatMoney(row.closing_balance)])}
-        />
-      </section>
-
-      {canViewStatements ? <section>
-        {missingStatements.length ? (
-          <Card className="border-amber-500 bg-amber-50/50">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-amber-900">
-                  Bank statements pending: {missingStatements.length}
-                </h2>
-                <p className="mt-1 text-sm text-amber-800">
-                  These active accounts do not have an uploaded statement covering {displayDate(today)}.
-                </p>
-              </div>
-              <span className="text-sm font-semibold text-amber-900">Upload using the form above</span>
-            </div>
-            <ul className="mt-4 grid gap-2 text-sm text-amber-950 md:grid-cols-2">
-              {missingStatements.map((row) => (
-                <li key={row.entity_id} className="rounded border border-amber-300 bg-white/60 px-3 py-2">
-                  <strong>{row.company_code}</strong> — {row.entity_name} ••••{row.entity_code}
-                  <span className="block text-xs text-amber-800">
-                    {row.last_statement_to ? `Last statement through ${displayDate(row.last_statement_to)}` : "No statement uploaded"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        ) : !dashboardError ? (
-          <Card className="border-emerald-500 bg-emerald-50/50">
-            <h2 className="font-semibold text-emerald-900">All bank statements are current through today</h2>
-          </Card>
-        ) : null}
-      </section> : null}
-
+      </details>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { signOut } from "@/lib/actions/auth";
 import { Button } from "@/components/ui/primitives";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
+import { CommandPalette } from "@/components/layout/command-palette";
 
 export function AppShell({
   children,
@@ -31,6 +32,13 @@ export function AppShell({
           <header className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--surface)]/80 px-4 py-3 backdrop-blur md:px-8">
             <p className="text-sm text-[var(--muted)] md:hidden">SundayMD</p>
             <div className="ml-auto flex items-center gap-3">
+              <CommandPalette
+                isAdmin={roles.includes("admin")}
+                permissions={permissions}
+              />
+              <a href="/help" className="text-sm font-medium text-[var(--accent)] hover:underline">
+                Help
+              </a>
               <span className="text-sm text-[var(--muted)]">{email}</span>
               <form action={signOut}>
                 <Button type="submit" variant="secondary">
