@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { createOpeningBalanceVoucher } from "@/lib/actions/vouchers";
+import { FinancialYearSelect } from "@/components/masters/financial-year-select";
 import { Button, Input, Select } from "@/components/ui/primitives";
 
 type Ledger = { id: string; code: string; name: string; company_id: string };
@@ -103,20 +104,14 @@ export function OpeningBalanceForm({
             </option>
           ))}
         </Select>
-        <Select
-          label="Financial year"
+        <FinancialYearSelect
+          companyId={companyId}
+          years={financialYears}
           name="financialYearId"
           required
           value={financialYearId}
-          onChange={(e) => setFinancialYearId(e.target.value)}
-        >
-          <option value="">Select</option>
-          {companyYears.map((y) => (
-            <option key={y.id} value={y.id}>
-              {y.code}
-            </option>
-          ))}
-        </Select>
+          onChange={setFinancialYearId}
+        />
         <Input
           label="Voucher date"
           name="voucherDate"

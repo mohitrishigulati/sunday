@@ -222,6 +222,67 @@ export async function ensureCashBookSetup(companyId: string): Promise<
   });
 }
 
+export async function createCashRegisterLocation(input: {
+  companyId: string;
+  code: string;
+  name: string;
+}): Promise<ActionResult<{ id: string; code: string; name: string }>> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+  const parsed = z
+    .object({
+      companyId: z.string().uuid(),
+      code: z.string().trim().min(1).max(16),
+      name: z.string().trim().min(1).max(200),
+    })
+    .safeParse(input);
+  if (!parsed.success) return fail("Location code aur name bharo.");
+  const access = await assertCompanyAccess(parsed.data.companyId, "write");
+  if (!access.ok) return access;
+
+  const supabase = await createClient();
+  await insertBusyAccountGroups(supabase as never, parsed.data.companyId);
+  const { data: cashGroup } = await supabase
+    .from("account_groups")
+    .select("id")
+    .eq("company_id", parsed.data.companyId)
+    .eq("code", "BS-CASH")
+    .maybeSingle();
+  const { data: cashLedger, error: cashLedgerError } = await supabase
+    .from("ledgers")
+    .insert({
+      company_id: parsed.data.companyId,
+      account_group_id: cashGroup?.id ?? null,
+      code: `CASH-${parsed.data.code.toUpperCase()}`,
+      name: `${parsed.data.name} Cash`,
+      ledger_type: "cash",
+      is_intercompany: false,
+    })
+    .select("id")
+    .single();
+  if (cashLedgerError || !cashLedger) {
+    return fail(cashLedgerError?.message ?? "Cash ledger nahi bana");
+  }
+  const { data: location, error } = await supabase
+    .from("locations")
+    .insert({
+      company_id: parsed.data.companyId,
+      code: parsed.data.code.toUpperCase(),
+      name: parsed.data.name,
+      location_type: "cash_counter",
+      is_cash_location: true,
+      cash_ledger_id: cashLedger.id,
+    })
+    .select("id, code, name")
+    .single();
+  if (error || !location) {
+    await supabase.from("ledgers").delete().eq("id", cashLedger.id);
+    return fail(error?.message ?? "Cash location nahi bani");
+  }
+  revalidatePath("/cash-book");
+  return ok(location);
+}
+
 export async function createCashBookEntry(
   input: z.infer<typeof cashEntrySchema>,
 ): Promise<ActionResult<{ id: string }>> {

@@ -37,3 +37,18 @@ export function indianFinancialYearsCovering(fromDate: string, toDate: string): 
   }
   return years;
 }
+
+export function aprilMarchYearLabel(year: {
+  code: string;
+  start_date?: string;
+  end_date?: string;
+  startDate?: string;
+  endDate?: string;
+}): string {
+  const start = year.startDate ?? year.start_date;
+  const end = year.endDate ?? year.end_date;
+  if (start && end) {
+    return `${year.code} (1 Apr ${start.slice(0, 4)} – 31 Mar ${end.slice(0, 4)})`;
+  }
+  return `${year.code} (April–March)`;
+}

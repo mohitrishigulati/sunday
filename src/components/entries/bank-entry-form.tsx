@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { createBankBookEntry } from "@/lib/actions/daily-entries";
+import { FinancialYearSelect } from "@/components/masters/financial-year-select";
 import { Button, Input, Select } from "@/components/ui/primitives";
 import { QuickCompanyBankAdd } from "@/components/entries/quick-company-bank-add";
 
@@ -24,7 +25,6 @@ export function BankEntryForm({ companies, financialYears, ledgers, bankAccounts
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const years = useMemo(() => financialYears.filter((year) => year.company_id === companyId), [financialYears, companyId]);
   const accounts = useMemo(() => bankAccounts.filter((account) => account.company_id === companyId), [bankAccounts, companyId]);
   const companyLedgers = useMemo(() => ledgers.filter((ledger) => ledger.company_id === companyId && ledger.ledger_type !== "bank"), [ledgers, companyId]);
 
@@ -57,10 +57,7 @@ export function BankEntryForm({ companies, financialYears, ledgers, bankAccounts
         <option value="">Select</option>
         {accounts.map((account) => <option key={account.id} value={account.id}>{account.account_name} — {account.account_number}</option>)}
       </Select>
-      <Select label="Financial year" name="financialYearId" required disabled={!companyId}>
-        <option value="">Select</option>
-        {years.map((year) => <option key={year.id} value={year.id}>{year.code}</option>)}
-      </Select>
+      <FinancialYearSelect companyId={companyId} years={financialYears} name="financialYearId" required />
       <Input label="Date" name="voucherDate" type="date" required />
       {lockedKind ? (
         <input type="hidden" name="entryKind" value={lockedKind} />

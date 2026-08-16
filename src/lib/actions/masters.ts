@@ -757,6 +757,30 @@ export async function ensureIndianFinancialYearsForRange(
   return ok({ codes });
 }
 
+export async function ensureAprilMarchYears(
+  companyId: string,
+): Promise<ActionResult<{ years: Array<{ id: string; company_id: string; code: string; start_date: string; end_date: string }>; currentId: string }>> {
+  const current = indianFinancialYearForDate();
+  const startYear = Number(current.startDate.slice(0, 4));
+  for (const year of [startYear - 1, startYear, startYear + 1]) {
+    const result = await ensureIndianFinancialYear(companyId, `${year}-04-01`);
+    if (!result.ok) return result;
+  }
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("financial_years")
+    .select("id, company_id, code, start_date, end_date")
+    .eq("company_id", companyId)
+    .order("start_date", { ascending: false });
+  const years = data ?? [];
+  const currentId = years.find((year) => year.code === current.code)?.id ?? years[0]?.id ?? "";
+  revalidatePath("/cash-book");
+  revalidatePath("/reports");
+  revalidatePath("/bank-book");
+  revalidatePath("/journals");
+  return ok({ years, currentId });
+}
+
 export async function createFinancialYear(
   input: z.infer<typeof fySchema>,
 ): Promise<ActionResult<{ id: string }>> {

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { FinancialYearSelect } from "@/components/masters/financial-year-select";
 import { Button, DataTable, Input, Select } from "@/components/ui/primitives";
 import { formatMoney } from "@/lib/format";
 import { BankStatementPartySelector } from "@/components/reports/bank-statement-party-selector";
@@ -1376,11 +1377,12 @@ export function ReportWorkbench({
             </option>
           ))}
         </Select>
-        <Select
-          label="Financial year"
+        <FinancialYearSelect
+          companyId={companyId}
+          years={financialYears}
           value={financialYearId}
-          onChange={(event) => {
-            const nextYearId = event.target.value;
+          emptyLabel="All years"
+          onChange={(nextYearId) => {
             setFinancialYearId(nextYearId);
             setPartyId("");
             const year = years.find((item) => item.id === nextYearId);
@@ -1389,15 +1391,17 @@ export function ReportWorkbench({
               setToDate(year.end_date);
             }
           }}
-          disabled={!companyId}
-        >
-          <option value="">All years</option>
-          {years.map((year) => (
-            <option key={year.id} value={year.id}>
-              {year.code}
-            </option>
-          ))}
-        </Select>
+          onEnsured={(ensured, currentId) => {
+            const year = ensured.find((item) => item.id === currentId);
+            if (!financialYearId && currentId) {
+              setFinancialYearId(currentId);
+              if (year?.start_date && year.end_date) {
+                setFromDate(year.start_date);
+                setToDate(year.end_date);
+              }
+            }
+          }}
+        />
         <Input
           label="From date"
           type="date"

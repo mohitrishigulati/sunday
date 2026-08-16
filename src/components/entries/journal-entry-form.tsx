@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { createJournalEntry } from "@/lib/actions/daily-entries";
+import { FinancialYearSelect } from "@/components/masters/financial-year-select";
 import { Button, Input, Select } from "@/components/ui/primitives";
 import { QuickCompanyBankAdd } from "@/components/entries/quick-company-bank-add";
 
@@ -25,7 +26,6 @@ export function JournalEntryForm({ companies, financialYears, ledgers, groups, b
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const years = useMemo(() => financialYears.filter((year) => year.company_id === companyId), [financialYears, companyId]);
   const companyLedgers = useMemo(() => ledgers.filter((ledger) => ledger.company_id === companyId), [ledgers, companyId]);
 
   const updateLine = (index: number, field: keyof Line, value: string) => {
@@ -58,10 +58,7 @@ export function JournalEntryForm({ companies, financialYears, ledgers, groups, b
           <option value="">Select</option>
           {companies.map((company) => <option key={company.id} value={company.id}>{company.code} — {company.name}</option>)}
         </Select>
-        <Select label="Financial year" name="financialYearId" required disabled={!companyId}>
-          <option value="">Select</option>
-          {years.map((year) => <option key={year.id} value={year.id}>{year.code}</option>)}
-        </Select>
+        <FinancialYearSelect companyId={companyId} years={financialYears} name="financialYearId" required />
         <Input label="Date" name="voucherDate" type="date" required />
         <Input label="Narration" name="narration" required />
       </div>

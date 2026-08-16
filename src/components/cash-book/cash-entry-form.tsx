@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createCashBookEntry, createFourSampleCashEntries, ensureCashBookSetup } from "@/lib/actions/cash-book";
+import { createCashBookEntry, createCashRegisterLocation, createFourSampleCashEntries, ensureCashBookSetup } from "@/lib/actions/cash-book";
 import { createParty } from "@/lib/actions/masters";
 import { indianFinancialYearForDate } from "@/lib/financial-year";
 import { Button, Input, Select } from "@/components/ui/primitives";
+import { FinancialYearSelect } from "@/components/masters/financial-year-select";
 
 type Company = { id: string; group_id: string; code: string; name: string };
 type Location = { id: string; company_id: string; code: string; name: string; cash_ledger_id: string | null };
@@ -39,12 +40,15 @@ export function CashEntryForm({
   const [pending, startTransition] = useTransition();
 
   const [setupHint, setSetupHint] = useState<string | null>(null);
+  const [extraLocations, setExtraLocations] = useState<Location[]>([]);
+  const [newLocationCode, setNewLocationCode] = useState("HQ");
+  const [newLocationName, setNewLocationName] = useState("Head office");
   const setupTried = useRef("");
 
   const company = companies.find((item) => item.id === companyId);
   const cashLocations = useMemo(
-    () => locations.filter((item) => item.company_id === companyId),
-    [locations, companyId],
+    () => [...locations, ...extraLocations].filter((item) => item.company_id === companyId),
+    [locations, extraLocations, companyId],
   );
   const years = useMemo(
     () => financialYears.filter((item) => item.company_id === companyId),
@@ -173,46 +177,65 @@ export function CashEntryForm({
           ))}
         </Select>
         <Input label="Date" type="date" required value={voucherDate} onChange={(event) => setVoucherDate(event.target.value)} />
-        <div>
-          <p className="mb-1 text-sm font-medium">Cash register / location</p>
-          <div className="max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-white">
-            {cashLocations.length === 0 ? (
-              <p className="px-3 py-2 text-sm text-[var(--muted)]">Abhi list khali hai — Create cash register dabao, ya wait karo.</p>
-            ) : (
-              cashLocations.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`block w-full border-b border-[var(--border)] px-3 py-2 text-left text-sm last:border-b-0 ${
-                    locationId === item.id ? "bg-[var(--accent)] text-white" : "hover:bg-[var(--surface-2)]"
-                  }`}
-                  onClick={() => setLocationId(item.id)}
-                >
-                  {item.code} — {item.name}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-        <div>
-          <p className="mb-1 text-sm font-medium">Financial year</p>
-          <div className="max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-white">
-            {years.length === 0 ? (
-              <p className="px-3 py-2 text-sm text-[var(--muted)]">Abhi year nahi hai — Create cash register dabao.</p>
-            ) : (
-              years.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`block w-full border-b border-[var(--border)] px-3 py-2 text-left text-sm last:border-b-0 ${
-                    financialYearId === item.id ? "bg-[var(--accent)] text-white" : "hover:bg-[var(--surface-2)]"
-                  }`}
-                  onClick={() => setFinancialYearId(item.id)}
-                >
-                  {item.code}
-                </button>
-              ))
-            )}
+        <Select
+          label="Cash register / location"
+          required
+          value={locationId}
+          onChange={(event) => setLocationId(event.target.value)}
+        >
+          <option value="">Select</option>
+          {cashLocations.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.code} — {item.name}
+            </option>
+          ))}
+        </Select>
+        <FinancialYearSelect
+          companyId={companyId}
+          years={financialYears}
+          value={financialYearId}
+          required
+          onChange={setFinancialYearId}
+        />
+        <div className="space-y-2 rounded-md border border-dashed border-[var(--border)] p-3 md:col-span-2">
+          <p className="text-sm font-medium">+ Add cash location yahin</p>
+          <div className="grid gap-2 md:grid-cols-[1fr_2fr_auto]">
+            <Input label="Code" value={newLocationCode} onChange={(event) => setNewLocationCode(event.target.value)} placeholder="HQ" />
+            <Input label="Name" value={newLocationName} onChange={(event) => setNewLocationName(event.target.value)} placeholder="Head office" />
+            <div className="self-end">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={pending || !companyId}
+                onClick={() =>
+                  startTransition(async () => {
+                    if (!companyId) {
+                      setError("Pehle company select karo.");
+                      return;
+                    }
+                    setError(null);
+                    const result = await createCashRegisterLocation({
+                      companyId,
+                      code: newLocationCode,
+                      name: newLocationName,
+                    });
+                    if (!result.ok) {
+                      setError(result.error);
+                      return;
+                    }
+                    setExtraLocations((current) => [
+                      { id: result.data.id, company_id: companyId, code: result.data.code, name: result.data.name, cash_ledger_id: result.data.id },
+                      ...current.filter((item) => item.id !== result.data.id),
+                    ]);
+                    setLocationId(result.data.id);
+                    setSetupHint(`Cash location added: ${result.data.code} — ${result.data.name}`);
+                    router.refresh();
+                  })
+                }
+              >
+                Add location
+              </Button>
+            </div>
           </div>
         </div>
       </div>
